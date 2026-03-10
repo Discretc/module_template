@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Module Outline Generator – MPU</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: #f0f2f5;
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ── Header ───────────────────────────────────────────────────── */
+    header {
+      width: 100%;
+      background: linear-gradient(135deg, #1e3a5f 0%, #2d5a8e 100%);
+      color: #fff;
+      padding: 1.5rem 2rem;
+      text-align: center;
+    }
+    header h1 { font-size: 1.5rem; font-weight: 600; }
+    header p  { font-size: 0.875rem; opacity: 0.85; margin-top: 0.25rem; }
+
+    /* ── Card ─────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      width: 100%;
+      max-width: 640px;
+      margin: 2rem auto;
+      padding: 2rem;
+    }
+    .card h2 {
+      font-size: 1.1rem;
+      margin-bottom: 1.25rem;
+      color: #1e3a5f;
+    }
+
+    /* ── Form elements ────────────────────────────────────────────── */
+    label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: #475569;
+      margin-bottom: 0.3rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    input, select {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      transition: border 0.15s;
+    }
+    input:focus, select:focus {
+      outline: none;
+      border-color: #2d5a8e;
+      box-shadow: 0 0 0 3px rgba(45,90,142,0.15);
+    }
+
+    .field       { margin-bottom: 1rem; }
+    .field-row   { display: flex; gap: 1rem; }
+    .field-row > .field { flex: 1; }
+
+    /* ── Autocomplete ─────────────────────────────────────────────── */
+    .autocomplete-wrapper { position: relative; }
+    .autocomplete-list {
+      position: absolute;
+      top: 100%;
+      left: 0; right: 0;
+      background: #fff;
+      border: 1px solid #cbd5e1;
+      border-top: none;
+      border-radius: 0 0 6px 6px;
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 10;
+      display: none;
+    }
+    .autocomplete-list.show { display: block; }
+    .autocomplete-item {
+      padding: 0.55rem 0.75rem;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+    .autocomplete-item:hover,
+    .autocomplete-item.active {
+      background: #e8f0fe;
+    }
+    .autocomplete-item .code {
+      font-weight: 600;
+      color: #1e3a5f;
+      margin-right: 0.5rem;
+    }
+
+    /* ── Module info panel ────────────────────────────────────────── */
+    #module-info {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+    }
+    #module-info.show { display: block; }
+    #module-info h3 {
+      font-size: 0.95rem;
+      color: #1e3a5f;
+      margin-bottom: 0.5rem;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 0.25rem 1rem;
+      font-size: 0.85rem;
+    }
+    .info-grid dt { font-weight: 600; color: #475569; }
+    .info-grid dd { color: #1e293b; }
+
+    /* ── Buttons ──────────────────────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.7rem 1.4rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary {
+      background: #2d5a8e;
+      color: #fff;
+    }
+    .btn-primary:hover { background: #1e3a5f; }
+    .btn-primary:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .btn-icon { font-size: 1.15rem; }
+
+    /* ── Status ───────────────────────────────────────────────────── */
+    .status {
+      font-size: 0.85rem;
+      margin-top: 0.75rem;
+      min-height: 1.2em;
+    }
+    .status.error { color: #dc2626; }
+    .status.success { color: #16a34a; }
+
+    /* ── Footer ───────────────────────────────────────────────────── */
+    footer {
+      margin-top: auto;
+      padding: 1.5rem;
+      font-size: 0.75rem;
+      color: #94a3b8;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Module Outline Generator</h1>
+  <p>Macao Polytechnic University – Internal Tool</p>
+</header>
+
+<div class="card">
+  <h2>1&ensp;Search for a Module</h2>
+
+  <div class="field autocomplete-wrapper">
+    <label for="module-code">Module Code</label>
+    <input
+      id="module-code"
+      type="text"
+      placeholder="Type a module code, e.g. COMP1121"
+      autocomplete="off"
+    />
+    <div id="autocomplete-list" class="autocomplete-list"></div>
+  </div>
+
+  <!-- Module info preview -->
+  <div id="module-info">
+    <h3 id="info-title"></h3>
+    <dl class="info-grid">
+      <dt>Programme</dt>   <dd id="info-programme"></dd>
+      <dt>Degree Level</dt><dd id="info-degree"></dd>
+      <dt>Pre-requisites</dt><dd id="info-prereq"></dd>
+      <dt>Credits</dt>     <dd id="info-credits"></dd>
+      <dt>Contact Hours</dt><dd id="info-hours"></dd>
+      <dt>Medium</dt>      <dd id="info-medium"></dd>
+    </dl>
+  </div>
+
+  <h2>2&ensp;Optional Details</h2>
+  <p style="font-size:0.85rem;color:#64748b;margin-bottom:1rem;">
+    Leave blank to fill in later within the Word document.
+  </p>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="academic-year">Academic Year</label>
+      <input id="academic-year" type="text" placeholder="2025/2026" value="2025/2026" />
+    </div>
+    <div class="field">
+      <label for="semester">Semester</label>
+      <select id="semester">
+        <option value="">— select —</option>
+        <option value="1">1</option>
+        <option value="2">2</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="instructor">Instructor Name</label>
+      <input id="instructor" type="text" placeholder="" />
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="" />
+    </div>
+  </div>
+
+  <div class="field-row">
+    <div class="field">
+      <label for="office">Office</label>
+      <input id="office" type="text" placeholder="" />
+    </div>
+    <div class="field">
+      <label for="office-phone">Office Phone</label>
+      <input id="office-phone" type="text" placeholder="" />
+    </div>
+  </div>
+
+  <h2 style="margin-top:1.5rem;">3&ensp;Generate</h2>
+  <button id="btn-generate" class="btn btn-primary" disabled>
+    <span class="btn-icon">⬇</span> Download Module Outline
+  </button>
+  <div id="status" class="status"></div>
+</div>
+
+<footer>Module Outline Generator &copy; 2026 Macao Polytechnic University</footer>
+
+<script>
+  // ── DOM refs ──────────────────────────────────────────────────────
+  const codeInput    = document.getElementById("module-code");
+  const acList       = document.getElementById("autocomplete-list");
+  const moduleInfo   = document.getElementById("module-info");
+  const btnGenerate  = document.getElementById("btn-generate");
+  const statusEl     = document.getElementById("status");
+
+  let selectedCode   = null;
+  let debounceTimer  = null;
+
+  // ── Autocomplete ──────────────────────────────────────────────────
+  codeInput.addEventListener("input", () => {
+    selectedCode = null;
+    btnGenerate.disabled = true;
+    moduleInfo.classList.remove("show");
+    clearTimeout(debounceTimer);
+    const q = codeInput.value.trim();
+    if (q.length < 1) { acList.classList.remove("show"); return; }
+    debounceTimer = setTimeout(() => fetchSuggestions(q), 200);
+  });
+
+  async function fetchSuggestions(q) {
+    const res  = await fetch(`/api/modules/search?q=${encodeURIComponent(q)}`);
+    const data = await res.json();
+    acList.innerHTML = "";
+    if (data.length === 0) { acList.classList.remove("show"); return; }
+    data.forEach(m => {
+      const div = document.createElement("div");
+      div.className = "autocomplete-item";
+      div.innerHTML = `<span class="code">${m.module_code}</span>${m.module_name}`;
+      div.addEventListener("click", () => selectModule(m.module_code));
+      acList.appendChild(div);
+    });
+    acList.classList.add("show");
+  }
+
+  // Close autocomplete on outside click
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".autocomplete-wrapper")) acList.classList.remove("show");
+  });
+
+  // ── Select a module ───────────────────────────────────────────────
+  async function selectModule(code) {
+    acList.classList.remove("show");
+    codeInput.value = code;
+    statusEl.textContent = "";
+    const res = await fetch(`/api/modules/${encodeURIComponent(code)}`);
+    if (!res.ok) {
+      statusEl.textContent = "Module not found.";
+      statusEl.className = "status error";
+      return;
+    }
+    const m = await res.json();
+    selectedCode = code;
+
+    // Populate info panel
+    document.getElementById("info-title").textContent = `${m.module_code} – ${m.module_name}`;
+    document.getElementById("info-programme").textContent = m.programme_name;
+    document.getElementById("info-degree").textContent = m.degree_level;
+    document.getElementById("info-prereq").textContent = m.prerequisites;
+    document.getElementById("info-credits").textContent = m.credits;
+    document.getElementById("info-hours").textContent = m.contact_hours;
+    document.getElementById("info-medium").textContent = m.medium_of_instruction;
+    moduleInfo.classList.add("show");
+
+    btnGenerate.disabled = false;
+  }
+
+  // ── Generate & download ───────────────────────────────────────────
+  btnGenerate.addEventListener("click", async () => {
+    if (!selectedCode) return;
+
+    const params = new URLSearchParams();
+    const fields = {
+      academic_year: "academic-year",
+      semester: "semester",
+      instructor: "instructor",
+      email: "email",
+      office: "office",
+      office_phone: "office-phone",
+    };
+    for (const [key, id] of Object.entries(fields)) {
+      const val = document.getElementById(id).value.trim();
+      if (val) params.set(key, val);
+    }
+
+    statusEl.textContent = "Generating…";
+    statusEl.className = "status";
+
+    try {
+      const url = `/api/generate/${encodeURIComponent(selectedCode)}?${params}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("Generation failed");
+
+      const blob = await res.blob();
+      const a    = document.createElement("a");
+      a.href     = URL.createObjectURL(blob);
+      a.download = `${selectedCode.toUpperCase()}_Module_Outline.docx`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+
+      statusEl.textContent = "✔ Document downloaded successfully.";
+      statusEl.className = "status success";
+    } catch (err) {
+      statusEl.textContent = "Error generating document. Please try again.";
+      statusEl.className = "status error";
+    }
+  });
+</script>
+
+</body>
+</html>
