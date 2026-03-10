@@ -98,10 +98,34 @@ The generate endpoint also accepts optional query parameters:
 academic_year, semester, instructor, email, office, office_phone
 
 
-## Adding Modules to the Database
+## Importing Real Data from Excel
 
-Open backend/seed.sql to add new programmes and modules, then delete the
-existing database file and restart the app to reseed.
+When you have the real university data in an Excel file, use the import script
+instead of the sample seed data.
+
+    python backend/import_excel.py path/to/your_data.xlsx
+
+The script will wipe the existing data and replace it with everything in the
+Excel file. Restart the Flask app afterwards.
+
+The Excel file should have one sheet where each row is a module, with columns:
+
+    Module Code | Module Name | Programme Name | Degree Level | Academic Unit
+    Pre-requisite(s) | Medium of Instruction | Credits | Contact Hours
+
+If your file uses different column header names, open backend/import_excel.py
+and update the COLUMN MAP section at the top of the file. The keys on the left
+are internal names that must not be changed; only the values on the right need
+to match your Excel headers.
+
+If your programmes are listed on a separate sheet, set PROGRAMME_SHEET to the
+sheet name and update PROGRAMME_COLUMN_MAP in the same section.
+
+
+## Adding Modules to the Database (development)
+
+Open backend/seed.sql to add sample modules, then delete the existing database
+file and restart the app to reseed.
 
     rm backend/module_outlines.db
     python backend/app.py

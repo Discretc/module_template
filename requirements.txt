@@ -3,3 +3,5 @@ flask-cors
 docxtpl
 python-docx
 pdfminer.six
+pandas
+openpyxl
