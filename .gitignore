@@ -15,6 +15,10 @@ env/
 .DS_Store
 Thumbs.db
 
+# Exclude template source files and PDF (local use only)
+Module Outline Templates/
+*.pdf
+
 # IDE
 .vscode/
 .idea/
