@@ -1,30 +1,50 @@
--- Seed data – sample programmes and modules
--- Based on the PDF example and realistic MPU data
+-- Seed data (v2) – sample faculties, programmes, and classes
+-- Matches the new trilingual schema
 
-INSERT INTO programmes (programme_name, degree_level, academic_unit) VALUES
-    ('Bachelor of Science in Computing',            'Bachelor''s', 'Faculty of Applied Sciences'),
-    ('Master of Science in Big Data and IoT',       'Master''s',   'Faculty of Applied Sciences'),
-    ('Bachelor of Arts in Design',                  'Bachelor''s', 'Faculty of Humanities and Social Sciences'),
-    ('Doctoral Programme in Computer Science',      'Doctoral',    'Faculty of Applied Sciences');
+INSERT INTO faculties (code, name_en, name_zh, name_pt) VALUES
+    ('FCA', 'Faculty of Applied Sciences',              '應用科學學院',   'Faculdade de Ciências Aplicadas'),
+    ('FCH', 'Faculty of Humanities and Social Sciences', '人文及社會科學學院', 'Faculdade de Humanidades e Ciências Sociais');
 
--- Modules linked to the programmes above (programme_id matches insertion order)
-INSERT INTO modules (module_code, module_name, programme_id, prerequisites, medium_of_instruction, credits, contact_hours) VALUES
-    -- Programme 1: BSc Computing
-    ('MSEL3101', 'Introduction to Psychology',          1, 'Nil',                      'English',    3, '45 hrs'),
-    ('COMP1121', 'Programming Fundamentals',            1, 'Nil',                      'English',    3, '45 hrs'),
-    ('COMP2201', 'Data Structures and Algorithms',      1, 'COMP1121',                 'English',    3, '45 hrs'),
-    ('COMP2202', 'Database Systems',                    1, 'COMP1121',                 'English',    3, '45 hrs'),
-    ('COMP3301', 'Software Engineering',                1, 'COMP2201, COMP2202',       'English',    3, '45 hrs'),
-    ('COMP3302', 'Computer Networks and Security',      1, 'COMP2201',                 'English',    3, '45 hrs'),
-    ('COMP4401', 'Final Year Project',                  1, 'COMP3301',                 'English',    6, '90 hrs'),
+INSERT INTO programmes (code, name_en, name_zh, name_pt, degree_level, faculty_id) VALUES
+    ('4LCSDI', 'Bachelor of Science in Computing',
+        '電腦學理學士學位課程', 'Licenciatura em Ciências da Computação',
+        'bachelor', 1),
+    ('4LAIDI', 'Bachelor of Science in Artificial Intelligence',
+        '人工智能理學士學位課程', 'Licenciatura em Inteligência Artificial',
+        'bachelor', 1),
+    ('MDATAM', 'Master of Science in Big Data and Internet of Things',
+        '大數據與物聯網碩士學位課程', 'Mestrado em Big Data e Internet das Coisas',
+        'master', 1),
+    ('4LDSGN', 'Bachelor of Arts in Design',
+        '設計學士學位課程', 'Licenciatura em Design',
+        'bachelor', 2);
 
-    -- Programme 2: MSc Big Data and IoT
-    ('MSBD5001', 'Advanced Machine Learning',           2, 'Nil',                      'English',    3, '45 hrs'),
-    ('MSBD5002', 'IoT Systems Architecture',            2, 'Nil',                      'English',    3, '45 hrs'),
-
-    -- Programme 3: BA Design
-    ('DSGN1101', 'Fundamentals of Visual Design',       3, 'Nil',                      'English',    3, '45 hrs'),
-    ('DSGN2201', 'Typography and Layout',               3, 'DSGN1101',                 'English',    3, '45 hrs'),
-
-    -- Programme 4: Doctoral CS
-    ('CSCI9001', 'Research Methods in Computer Science', 4, 'Nil',                     'English',    3, '45 hrs');
+INSERT INTO classes (class_code, module_code, module_name_en, module_name_zh, module_name_pt,
+    prerequisite_en, prerequisite_zh, prerequisite_pt, credits, duration,
+    instructor_en, instructor_zh, instructor_pt, email, room_en, room_zh, room_pt, telephone,
+    programme_id) VALUES
+    ('COMP1123-121', 'COMP1123', 'Computer Organization', '計算機組織', 'Organização de Computadores',
+        'Nil', '無', 'Nil', 3, 45,
+        'CHAN Tai Man', '陳大文', 'CHAN Tai Man', 'tmchan@mpu.edu.mo',
+        'M505', 'M505', 'M505', '8599-3275',
+        1),
+    ('COMP1124-121', 'COMP1124', 'Advanced Programming', '高級程式設計', 'Programação Avançada',
+        'COMP1121', 'COMP1121', 'COMP1121', 3, 45,
+        'WONG Sio Kei', '黃兆基', 'WONG Sio Kei', 'skwong@mpu.edu.mo',
+        'M503', 'M503', 'M503', '8599-3280',
+        1),
+    ('COMP1123-124', 'COMP1123', 'Computer Organization', '計算機組織', 'Organização de Computadores',
+        'Nil', '無', 'Nil', 3, 45,
+        'LEI Ka Hou', '李家豪', 'LEI Ka Hou', 'khlei@mpu.edu.mo',
+        'M506', 'M506', 'M506', '8599-3281',
+        2),
+    ('MSBD5001-131', 'MSBD5001', 'Advanced Machine Learning', '高級機器學習', 'Aprendizagem Automática Avançada',
+        'Nil', '無', 'Nil', 3, 45,
+        'LEONG Hou U', '梁浩宇', 'LEONG Hou U', 'huleong@mpu.edu.mo',
+        'M508', 'M508', 'M508', '8599-3290',
+        3),
+    ('DSGN1101-211', 'DSGN1101', 'Fundamentals of Visual Design', '視覺設計基礎', 'Fundamentos do Design Visual',
+        'Nil', '無', 'Nil', 3, 45,
+        'HO Mei Leng', '何美玲', 'HO Mei Leng', 'mlho@mpu.edu.mo',
+        'A301', 'A301', 'A301', '8599-6100',
+        4);
