@@ -5,3 +5,4 @@ python-docx
 pdfminer.six
 pandas
 openpyxl
+gunicorn
