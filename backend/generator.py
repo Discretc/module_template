@@ -29,6 +29,61 @@ DEGREE_LABELS = {
 
 LANG_SUFFIXES = {"en": "EN", "zh": "ZH", "pt": "PT"}
 
+# ── Marking-scheme rule text per language ────────────────────────────────────
+# Rule 1 = no text; Rule 2 = final<35 resit; Rule 3 = cw+final<35 resit; Rule 4 = cw+final<35 fail
+MARKING_RULES = {
+    2: {
+        "en": (
+            "Students with a score of less than 35 in the final examination must take the "
+            "resit examination even if the overall score for the learning module is 50 or above."
+        ),
+        "zh": "若學生期末考試分數為35分以下，即使其總分達50分或以上，學生必須參加補考。",
+        "pt": (
+            "Qualquer aluno que obtenha menos de 35% no exame final terá de se submeter ao "
+            "exame suplementar, independentemente da nota final."
+        ),
+    },
+    3: {
+        "en": (
+            "Students with an overall score of less than 35 in the coursework must take the "
+            "resit examination even if the overall score for the module is 50 or above.\n\n"
+            "Students with a score of less than 35 in the final examination must take the "
+            "resit examination even if the overall score for the module is 50 or above.\n\n"
+            "Students with an overall final grade of less than 35 are NOT allowed to take the resit examination."
+        ),
+        "zh": (
+            "若學生總體平時分數為35分以下，即使其總分達50分或以上，學生必須參加補考。\n\n"
+            "若學生期末考試分數為35分以下，即使其總分達50分或以上，學生必須參加補考。\n\n"
+            "若學生總成績為35分以下，學生不能參加補考。"
+        ),
+        "pt": (
+            "Qualquer aluno que obtenha menos de 35% na avaliação contínua terá de se submeter ao "
+            "exame suplementar, independentemente da nota final.\n\n"
+            "Qualquer aluno que obtenha menos de 35% no exame final terá de se submeter ao "
+            "exame suplementar, independentemente da nota final.\n\n"
+            "Qualquer aluno que obtenha menos de 35% no nota final não pode realizar o exame suplementar."
+        ),
+    },
+    4: {
+        "en": (
+            "Students with an overall score of less than 35 in the coursework will fail the module "
+            "even if the overall score for the module is 50 or above.\n\n"
+            "Students with a score of less than 35 in the final examination will fail the module "
+            "even if the overall score for the module is 50 or above."
+        ),
+        "zh": (
+            "若學生總體平時分數為35分以下，即使其總分達50分或以上，學科單元之成績作不及格處理。\n\n"
+            "若學生期末考試分數為35分以下，即使其總分達50分或以上，學科單元之成績作不及格處理。"
+        ),
+        "pt": (
+            "Qualquer aluno que obtenha menos de 35% na avaliação contínua vai reprovar ao módulo, "
+            "independentemente da nota final.\n\n"
+            "Qualquer aluno que obtenha menos de 35% no exame final vai reprovar ao módulo, "
+            "independentemente da nota final."
+        ),
+    },
+}
+
 
 def _build_context(cls: dict, lang: str) -> dict:
     """Build the Jinja2 context dict for a single class + language."""
@@ -37,6 +92,11 @@ def _build_context(cls: dict, lang: str) -> dict:
 
     duration = cls.get("duration")
     contact_hours = f"{duration} hrs" if duration else ""
+
+    marking_rule = cls.get("marking_rule", 1) or 1
+    marking_text = ""
+    if marking_rule in MARKING_RULES:
+        marking_text = MARKING_RULES[marking_rule].get(lang, "")
 
     if lang == "en":
         return {
@@ -55,6 +115,7 @@ def _build_context(cls: dict, lang: str) -> dict:
             "email": cls.get("email", ""),
             "office": cls.get("room_en", ""),
             "office_phone": cls.get("telephone", ""),
+            "marking_scheme_text": marking_text,
         }
     elif lang == "zh":
         return {
@@ -73,6 +134,7 @@ def _build_context(cls: dict, lang: str) -> dict:
             "email": cls.get("email", ""),
             "office": cls.get("room_zh", "") or cls.get("room_en", ""),
             "office_phone": cls.get("telephone", ""),
+            "marking_scheme_text": marking_text,
         }
     else:  # pt
         return {
@@ -91,6 +153,7 @@ def _build_context(cls: dict, lang: str) -> dict:
             "email": cls.get("email", ""),
             "office": cls.get("room_pt", "") or cls.get("room_en", ""),
             "office_phone": cls.get("telephone", ""),
+            "marking_scheme_text": marking_text,
         }
 
 

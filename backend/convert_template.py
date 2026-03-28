@@ -49,7 +49,11 @@ def replace_para_text(paragraph, old, new):
 
 
 def set_para_text(paragraph, text):
-    """Replace all text in a paragraph."""
+    """Replace all text in a paragraph (including hyperlinks)."""
+    # Remove hyperlink elements that live outside normal runs
+    nsmap = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+    for hl in paragraph._element.findall('.//w:hyperlink', nsmap):
+        paragraph._element.remove(hl)
     if paragraph.runs:
         paragraph.runs[0].text = text
         for run in paragraph.runs[1:]:
@@ -84,6 +88,18 @@ def convert_en():
     set_cell_text(t0, 7, 1, "{{ office }}")
     set_cell_text(t0, 7, 3, "{{ office_phone }}")
 
+    # ── Body paragraph replacements ──
+    for para in doc.paragraphs:
+        # Assessment: simplified (no URL)
+        if para.text.strip().startswith("The assessment will be conducted"):
+            set_para_text(para, "The assessment will be conducted following the University\u2019s Assessment Strategy. Passing this learning module indicates that students will have attained the ILOs of this learning module and thus acquired its credits.")
+        # Academic Integrity: shortened (no URL at end)
+        elif para.text.strip().startswith("The Macao Polytechnic University requires"):
+            set_para_text(para, "The Macao Polytechnic University requires every student to be fully committed to academic integrity in their research and academic activities. Violations of academic integrity, which include but are not limited to plagiarism, collusion, fabrication or falsification, reuse of one\u2019s own work and examination cheating, are regarded as serious academic offences that may lead to disciplinary action. Students should read the relevant regulations and guidelines in the Student Handbook which is distributed upon admission into the University.")
+        # Marking Scheme: Jinja2 placeholder
+        elif para.text.strip() == "[Insert marking scheme]":
+            set_para_text(para, "{{ marking_scheme_text }}")
+
     doc.save(dst)
     print(f"  EN  -> {dst}")
 
@@ -112,6 +128,18 @@ def convert_zh():
     set_cell_text(t0, 6, 3, "{{ email }}")
     set_cell_text(t0, 7, 1, "{{ office }}")
     set_cell_text(t0, 7, 3, "{{ office_phone }}")
+
+    # ── Body paragraph replacements ──
+    for para in doc.paragraphs:
+        # Assessment: simplified (no URL)
+        if para.text.strip().startswith("有關考評標準按大學的"):
+            set_para_text(para, "有關考評標準按大學的學生考評與評分準則指引進行。學生成績合格表示其達到本學科單元/科目的預期學習成效，因而取得相應學分。")
+        # Academic Integrity: shortened (no URL at end)
+        elif para.text.strip().startswith("澳門理工大學要求"):
+            set_para_text(para, "澳門理工大學要求每位學生在研究和學術活動中要完全保持學術誠信。違反學術誠信的行為，包括但不限於剽竊、互相抄襲、捏造事實或偽造結論、重複利用一項研究成果及考試作弊，均構成嚴重的學術違規行為，可能會導致紀律處分。學生應閱讀載於學生手冊的有關規章制度和準則，有關學生手冊已於入學時派發。")
+        # Marking Scheme: Jinja2 placeholder
+        elif "[插入評分準則]" in para.text:
+            set_para_text(para, "{{ marking_scheme_text }}")
 
     doc.save(dst)
     print(f"  ZH  -> {dst}")
@@ -168,7 +196,7 @@ def convert_pt():
         "In this learning module, students are required to complete the following assessment activities:":
             "Nesta unidade curricular, os alunos devem completar as seguintes actividades de avaliação:",
         "Marking scheme": "Grelha de Avaliação",
-        "[Insert marking scheme]": "[Inserir grelha de avaliação]",
+        "[Insert marking scheme]": "{{ marking_scheme_text }}",
         "Required readings": "Leitura Obrigatória",
         "References": "Referências",
         "Student Feedback": "Feedback dos Alunos",
@@ -185,11 +213,11 @@ def convert_pt():
         "Attendance requirements are governed":
             "Os requisitos de assiduidade são regidos pelo Regulamento Académico dos Programas de Grau de {{ degree_level }} da Universidade Politécnica de Macau. Os alunos que não cumpram os requisitos de assiduidade da unidade curricular receberão a classificação 'F'.",
         "The assessment will be conducted":
-            "A avaliação será conduzida de acordo com a Estratégia de Avaliação da Universidade (consultar www.mpu.edu.mo/teaching_learning/en/assessment_strategy.php). A aprovação nesta unidade curricular indica que os alunos atingiram os resultados de estudo previstos e, assim, obtiveram os respetivos créditos.",
+            "O critério de avaliação é correspondente à \"Estratégia de Avaliação\" da Universidade. O \"aproveitamento\" na classificação significa que os alunos atingiram os resultados de estudo previstos para esta unidade curricular / disciplina e podem obter os respectivos créditos.",
         "At the end of every semester":
             "No final de cada semestre, os alunos são convidados a dar feedback sobre a unidade curricular e a organização do ensino através de questionários. O seu feedback é importante para os docentes melhorarem a unidade curricular e a sua lecionação para futuros alunos. O docente e os coordenadores do curso irão considerar todo o feedback e responder com ações formalmente na revisão anual do curso.",
         "The Macao Polytechnic University requires":
-            "A Universidade Politécnica de Macau exige que os alunos tenham pleno compromisso com a integridade académica na realização de actividades de investigação e académicas. Violações da integridade académica, que incluem, mas não se limitam a plágio, conluio, fabricação ou falsificação, reutilização de trabalhos e fraude em exames, são consideradas infrações académicas graves e podem levar a ações disciplinares. Os alunos devem ler os regulamentos e orientações relevantes no Manual do Estudante, que é distribuído aquando da admissão na Universidade, e cuja cópia também pode ser encontrada em www.mpu.edu.mo/student_handbook/.",
+            "A Universidade Politécnica de Macau exige que os alunos tenham pleno compromisso com a integridade académica na realização de actividades de investigação e académicas. Violações da integridade académica, que incluem, mas não se limitam a plágio, conluio, fabricação ou falsificação, reutilização de trabalhos e fraude em exames, são consideradas infrações académicas graves e podem levar a ações disciplinares. Os alunos devem ler os regulamentos e orientações relevantes no Manual do Estudante, o qual deve ser atribuído aquando do acesso à Universidade.",
     }
     for para in doc.paragraphs:
         for start_phrase, pt_text in pt_long.items():

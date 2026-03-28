@@ -59,6 +59,7 @@ COLUMN_MAP = {
     "room_zh":         "Room_Chn",
     "room_pt":         "Room_Prt",
     "telephone":       "Telephone",
+    "marking_rule":    "Marking_Rule",
 }
 
 # Which sheet to read (0 = first sheet, or use a sheet name string)
@@ -159,13 +160,19 @@ def import_data(excel_path: str):
         duration_val = col(row, "duration")
 
         try:
+            marking_rule_val = col(row, "marking_rule", "1")
+            try:
+                marking_rule_int = int(float(marking_rule_val))
+            except (ValueError, TypeError):
+                marking_rule_int = 1
+
             conn.execute(
                 """INSERT INTO classes
                    (class_code, module_code, module_name_en, module_name_zh, module_name_pt,
                     prerequisite_en, prerequisite_zh, prerequisite_pt,
                     credits, duration, instructor_en, instructor_zh, instructor_pt,
-                    email, room_en, room_zh, room_pt, telephone, programme_id)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    email, room_en, room_zh, room_pt, telephone, marking_rule, programme_id)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     class_code, module_code,
                     col(row, "module_name_en"), col(row, "module_name_zh"), col(row, "module_name_pt"),
@@ -176,6 +183,7 @@ def import_data(excel_path: str):
                     col(row, "email"),
                     col(row, "room_en"), col(row, "room_zh"), col(row, "room_pt"),
                     col(row, "telephone"),
+                    marking_rule_int,
                     prog_id,
                 ),
             )
