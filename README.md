@@ -65,14 +65,14 @@ languages. Generated files are also saved on the server in the `output/` folder.
    This is a one-time step that reads the original university Word templates
    (EN, ZH, PT) and inserts Jinja2 placeholder tags for all auto-filled fields.
 
-        python backend/convert_template.py
+        python3 backend/convert_template.py
 
    This creates three files in `backend/templates/`:
    `template_en.docx`, `template_zh.docx`, `template_pt.docx`
 
 5. Run the application
 
-        python backend/app.py
+        python3 backend/app.py
 
    The database is created and seeded with sample data automatically on first
    run. The app starts on port **5001**.
