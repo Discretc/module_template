@@ -16,6 +16,7 @@ Produces:
 
 import os
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 BASE_DIR = os.path.dirname(__file__)
 SRC_DIR = os.path.join(BASE_DIR, "..", "Module Outline Templates")
@@ -98,6 +99,7 @@ def convert_en():
         # Marking Scheme: Jinja2 placeholder
         elif para.text.strip() == "[Insert marking scheme]":
             set_para_text(para, "{{ marking_scheme_text }}")
+            para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     doc.save(dst)
     print(f"  EN  -> {dst}")
@@ -139,6 +141,7 @@ def convert_zh():
         # Marking Scheme: Jinja2 placeholder
         elif "[插入評分準則]" in para.text:
             set_para_text(para, "{{ marking_scheme_text }}")
+            para.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
 
     doc.save(dst)
     print(f"  ZH  -> {dst}")
