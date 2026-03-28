@@ -15,7 +15,6 @@ Produces:
 """
 
 import os
-import subprocess
 from docx import Document
 
 BASE_DIR = os.path.dirname(__file__)
