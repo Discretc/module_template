@@ -29,9 +29,9 @@ import pandas as pd
 COLUMN_MAP = {
     # Faculty
     "faculty_code": "Faculty_Code",
-    "faculty_en":   "Faculty _Eng",
-    "faculty_zh":   "Faculty _Chn",
-    "faculty_pt":   "Faculty _Prt",
+    "faculty_en":   "Faculty_Eng",
+    "faculty_zh":   "Faculty_Chn",
+    "faculty_pt":   "Faculty_Prt",
 
     # Programme
     "prog_code":    "Prog_Code",
