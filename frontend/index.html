@@ -171,6 +171,35 @@
   <div id="status" class="status"></div>
 </div>
 
+<div class="card">
+  <h2>Data Management &ensp; &mdash; &ensp; Import from Excel</h2>
+  <p style="font-size:0.85rem;color:#475569;margin-bottom:1rem">
+    Upload an Excel file (<code>.xlsx</code>) to replace all current data in the database.
+    The file must contain <strong>one sheet</strong> with the columns listed below.
+  </p>
+
+  <details style="margin-bottom:1rem">
+    <summary style="cursor:pointer;font-weight:600;font-size:0.85rem;color:#2d5a8e">Required Excel Columns (click to expand)</summary>
+    <table id="col-table" style="width:100%;border-collapse:collapse;margin-top:0.5rem;font-size:0.8rem">
+      <thead>
+        <tr style="background:#f1f5f9">
+          <th style="text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid #e2e8f0">Field</th>
+          <th style="text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid #e2e8f0">Excel Column Header</th>
+        </tr>
+      </thead>
+      <tbody id="col-tbody"></tbody>
+    </table>
+  </details>
+
+  <div class="field" style="display:flex;align-items:center;gap:1rem">
+    <input type="file" id="excel-file" accept=".xlsx,.xls" style="font-size:0.9rem" />
+    <button id="btn-upload" class="btn btn-primary" disabled style="white-space:nowrap">
+      Upload &amp; Import
+    </button>
+  </div>
+  <div id="upload-status" class="status"></div>
+</div>
+
 <footer>Module Outline Generator &copy; 2026 Macao Polytechnic University</footer>
 
 <script>
@@ -347,6 +376,84 @@
       btnGenerate.disabled = false;
     }
   });
+
+  // ── Excel Upload ─────────────────────────────────────────────────
+  const fileInput    = document.getElementById("excel-file");
+  const btnUpload    = document.getElementById("btn-upload");
+  const uploadStatus = document.getElementById("upload-status");
+
+  fileInput.addEventListener("change", () => {
+    btnUpload.disabled = !fileInput.files.length;
+    uploadStatus.textContent = "";
+  });
+
+  btnUpload.addEventListener("click", async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    uploadStatus.textContent = "Uploading & importing...";
+    uploadStatus.className = "status";
+    btnUpload.disabled = true;
+
+    try {
+      const res = await fetch("/api/import-excel", {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+
+      const warnings = (data.warnings && data.warnings.length)
+        ? `\nWarnings: ${data.warnings.join("; ")}` : "";
+      uploadStatus.textContent =
+        `Imported ${data.faculties} faculties, ${data.programmes} programmes, ` +
+        `${data.classes} classes (${data.skipped} skipped) from ${data.total_rows} rows.` +
+        warnings;
+      uploadStatus.className = "status success";
+
+      // Refresh dropdowns
+      resetSelect(selFaculty, "-- select faculty --");
+      resetSelect(selProgramme, "-- all programmes --");
+      resetSelect(selClass, "-- all classes --");
+      selProgramme.disabled = true;
+      selClass.disabled = true;
+      allClasses = [];
+      updateSummary();
+
+      const facRes = await fetch("/api/faculties");
+      const facData = await facRes.json();
+      facData.forEach(f => {
+        const opt = document.createElement("option");
+        opt.value = f.id;
+        opt.textContent = `${f.code} – ${f.name_en}`;
+        selFaculty.appendChild(opt);
+      });
+    } catch (err) {
+      uploadStatus.textContent = err.message || "Error importing data.";
+      uploadStatus.className = "status error";
+    } finally {
+      btnUpload.disabled = false;
+    }
+  });
+
+  // ── Load column format reference ─────────────────────────────────
+  (async () => {
+    try {
+      const res = await fetch("/api/column-format");
+      const map = await res.json();
+      const tbody = document.getElementById("col-tbody");
+      for (const [field, header] of Object.entries(map)) {
+        const tr = document.createElement("tr");
+        tr.innerHTML =
+          `<td style="padding:0.25rem 0.5rem;border-bottom:1px solid #f1f5f9">${field}</td>` +
+          `<td style="padding:0.25rem 0.5rem;border-bottom:1px solid #f1f5f9;font-family:monospace;color:#178656"><strong>${header}</strong></td>`;
+        tbody.appendChild(tr);
+      }
+    } catch (_) {}
+  })();
 </script>
 
 </body>

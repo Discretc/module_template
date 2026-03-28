@@ -15,11 +15,16 @@ import os
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
+import tempfile
+
 from database import init_db, get_faculties, get_programmes, get_classes, get_classes_full
 from generator import generate_batch
+from import_excel import import_data, COLUMN_MAP
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 CORS(app)
+
+ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
 
 init_db()
 
@@ -81,6 +86,41 @@ def api_generate():
         download_name="Module_Outlines.zip",
         mimetype="application/zip",
     )
+
+
+# ── Import Excel data ─────────────────────────────────────────────────────────
+@app.route("/api/import-excel", methods=["POST"])
+def api_import_excel():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "No file selected"}), 400
+
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        return jsonify({"error": f"Invalid file type '{ext}'. Please upload .xlsx or .xls"}), 400
+
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        f.save(tmp.name)
+        tmp_path = tmp.name
+
+    try:
+        result = import_data(tmp_path)
+        # Re-initialise the DB connection so new data is visible immediately
+        init_db()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        os.unlink(tmp_path)
+
+
+@app.route("/api/column-format")
+def api_column_format():
+    """Return the expected Excel column format."""
+    return jsonify(COLUMN_MAP)
 
 
 if __name__ == "__main__":

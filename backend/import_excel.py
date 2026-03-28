@@ -91,11 +91,14 @@ def derive_degree_level(prog_name_en):
     return "bachelor"
 
 
-def import_data(excel_path: str):
-    print(f"Reading: {excel_path}")
+def import_data(excel_path: str) -> dict:
+    """Import data from an Excel file into the database.
+    Returns a dict with counts and status."""
+    result = {"faculties": 0, "programmes": 0, "classes": 0, "skipped": 0, "warnings": []}
+
     df = pd.read_excel(excel_path, sheet_name=SHEET)
     df.columns = [str(c).strip() for c in df.columns]
-    print(f"  {len(df)} rows found")
+    result["total_rows"] = len(df)
 
     # --- Recreate database ---
     if os.path.exists(DB_PATH):
@@ -117,7 +120,7 @@ def import_data(excel_path: str):
         )
         faculty_map[code] = cur.lastrowid
     conn.commit()
-    print(f"  {len(faculty_map)} faculty/ies imported")
+    result["faculties"] = len(faculty_map)
 
     # --- Pass 2: programmes ---
     prog_map = {}  # code -> id
@@ -137,7 +140,7 @@ def import_data(excel_path: str):
         )
         prog_map[pcode] = cur.lastrowid
     conn.commit()
-    print(f"  {len(prog_map)} programme(s) imported")
+    result["programmes"] = len(prog_map)
 
     # --- Pass 3: classes ---
     imported = 0
@@ -189,13 +192,14 @@ def import_data(excel_path: str):
             )
             imported += 1
         except sqlite3.IntegrityError:
-            print(f"  WARNING: duplicate class_code '{class_code}' — skipping")
+            result["warnings"].append(f"duplicate class_code '{class_code}' — skipped")
             skipped += 1
 
     conn.commit()
     conn.close()
-    print(f"  {imported} class(es) imported, {skipped} skipped")
-    print("Done. Restart the Flask app to use the new data.")
+    result["classes"] = imported
+    result["skipped"] = skipped
+    return result
 
 
 if __name__ == "__main__":
@@ -206,4 +210,11 @@ if __name__ == "__main__":
     if not os.path.exists(path):
         print(f"File not found: {path}")
         sys.exit(1)
-    import_data(path)
+    import_result = import_data(path)
+    print(f"  {import_result['total_rows']} rows found")
+    print(f"  {import_result['faculties']} faculty/ies imported")
+    print(f"  {import_result['programmes']} programme(s) imported")
+    print(f"  {import_result['classes']} class(es) imported, {import_result['skipped']} skipped")
+    for w in import_result.get("warnings", []):
+        print(f"  WARNING: {w}")
+    print("Done.")
