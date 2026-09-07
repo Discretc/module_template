@@ -121,9 +121,7 @@
     <div class="field">
       <label for="academic-year">Academic Year</label>
       <select id="academic-year">
-        <option value="2025/2026" selected>2025/2026</option>
-        <option value="2026/2027">2026/2027</option>
-        <option value="2024/2025">2024/2025</option>
+        <option value="">Loading academic years...</option>
       </select>
     </div>
     <div class="field">
@@ -212,6 +210,22 @@
 
   let allClasses = []; // classes currently loaded for counting
 
+  async function loadAcademicYears() {
+    const select = document.getElementById("academic-year");
+    const res = await fetch("/api/academic-years");
+    const data = await res.json();
+    select.innerHTML = "";
+    data.years.forEach(year => {
+      const opt = document.createElement("option");
+      opt.value = year;
+      opt.textContent = year;
+      opt.selected = year === data.default;
+      select.appendChild(opt);
+    });
+  }
+
+  loadAcademicYears();
+
   // ── Load faculties on start ────────────────────────────────────────
   (async () => {
     const res = await fetch("/api/faculties");
@@ -290,7 +304,8 @@
       const opt = document.createElement("option");
       opt.value = c.id;
       const name = c.module_name_en || c.module_name_zh || c.class_code;
-      opt.textContent = `${c.class_code} – ${name} (${c.instructor_en || ""})`;
+      const joint = c.joint_class ? ` · joint class (${c.joint_member_count})` : "";
+      opt.textContent = `${c.class_code} – ${name} (${c.instructor_en || ""})${joint}`;
       selClass.appendChild(opt);
     });
   }
@@ -320,7 +335,7 @@
         ? `all <strong>${count}</strong> class(es) in this programme`
         : `all <strong>${count}</strong> class(es) in this faculty`;
 
-    summaryEl.innerHTML = `Will generate <strong>${count * 3}</strong> files (${scope} &times; 3 languages).`;
+    summaryEl.innerHTML = `Will generate <strong>${count * 3}</strong> files (${scope} &times; 3 languages). Joint classes count as one outline.`;
     btnGenerate.disabled = false;
   }
 
@@ -410,7 +425,8 @@
         ? `\nWarnings: ${data.warnings.join("; ")}` : "";
       uploadStatus.textContent =
         `Imported ${data.faculties} faculties, ${data.programmes} programmes, ` +
-        `${data.classes} classes (${data.skipped} skipped) from ${data.total_rows} rows.` +
+        `${data.classes} classes grouped into ${data.outlines} outlines ` +
+        `(${data.joint_groups} joint groups; ${data.skipped} skipped) from ${data.total_rows} rows.` +
         warnings;
       uploadStatus.className = "status success";
 
@@ -422,6 +438,7 @@
       selClass.disabled = true;
       allClasses = [];
       updateSummary();
+      await loadAcademicYears();
 
       const facRes = await fetch("/api/faculties");
       const facData = await facRes.json();

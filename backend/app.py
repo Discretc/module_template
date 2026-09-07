@@ -17,7 +17,14 @@ from flask_cors import CORS
 
 import tempfile
 
-from database import init_db, get_faculties, get_programmes, get_classes, get_classes_full
+from database import (
+    get_academic_years,
+    get_classes,
+    get_classes_full,
+    get_faculties,
+    get_programmes,
+    init_db,
+)
 from generator import generate_batch
 from import_excel import import_data, COLUMN_MAP
 
@@ -52,6 +59,11 @@ def api_classes():
     prog_id = request.args.get("programme_id", type=int)
     fac_id = request.args.get("faculty_id", type=int)
     return jsonify(get_classes(prog_id, fac_id))
+
+
+@app.route("/api/academic-years")
+def api_academic_years():
+    return jsonify(get_academic_years())
 
 
 # ── Generate templates ───────────────────────────────────────────────────────

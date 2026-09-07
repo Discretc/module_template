@@ -1,36 +1,48 @@
-"""
-generator.py
-------------
-Generates module-outline Word documents in all three languages (EN, ZH, PT)
-using docxtpl.  Supports batch generation for multiple classes, outputting
-all files into a folder and optionally returning a zip archive.
-"""
+"""Generate editable MPU module outlines from the official language templates."""
+
+from __future__ import annotations
 
 import io
+import math
 import os
+import re
 import zipfile
 from datetime import datetime
-from docxtpl import DocxTemplate
+from pathlib import Path
 
-TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "output")
+from docxtpl import DocxTemplate
+from jinja2 import Environment, StrictUndefined
+
+
+TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 TEMPLATES = {
-    "en": os.path.join(TEMPLATE_DIR, "template_en.docx"),
-    "zh": os.path.join(TEMPLATE_DIR, "template_zh.docx"),
-    "pt": os.path.join(TEMPLATE_DIR, "template_pt.docx"),
+    "en": TEMPLATE_DIR / "template_en.docx",
+    "zh": TEMPLATE_DIR / "template_zh.docx",
+    "pt": TEMPLATE_DIR / "template_pt.docx",
 }
 
 DEGREE_LABELS = {
-    "doctoral": {"en": "Doctoral",  "zh": "博士", "pt": "Doutor"},
-    "master":   {"en": "Master's",  "zh": "碩士", "pt": "Mestre"},
-    "bachelor": {"en": "Bachelor's", "zh": "學士", "pt": "Licenciado"},
+    "doctoral": {"en": "Doctoral", "zh": "博士", "pt": "Doutor"},
+    "master": {"en": "Master’s", "zh": "碩士", "pt": "Mestre"},
+    "bachelor": {"en": "Bachelor’s", "zh": "學士", "pt": "Licenciado"},
 }
 
 LANG_SUFFIXES = {"en": "EN", "zh": "ZH", "pt": "PT"}
+LANGUAGE_LABELS = {"en": "English", "zh": "中文", "pt": "Português"}
+STRICT_JINJA = Environment(undefined=StrictUndefined, autoescape=True)
 
-# ── Marking-scheme rule text per language ────────────────────────────────────
-# Rule 1 = no text; Rule 2 = final<35 resit; Rule 3 = cw+final<35 resit; Rule 4 = cw+final<35 fail
+GENERIC_MISSING = {"", "none", "nan", "null", "n/a", "na", "not applicable", "-", "--"}
+PREREQUISITE_MISSING = GENERIC_MISSING | {
+    "nil", "no prerequisite", "no prerequisites", "無", "没有", "沒有",
+    "não tem", "nao tem", "sem pré-requisitos", "sem pre-requisitos",
+}
+PREREQUISITE_DEFAULTS = {"en": "Nil", "zh": "無", "pt": "Não tem"}
+
+
+# Rule 1 = blank; Rule 2 = final<35 resit; Rule 3 = coursework and final
+# thresholds; Rule 4 = coursework or final threshold causes module failure.
 MARKING_RULES = {
     2: {
         "en": (
@@ -61,7 +73,7 @@ MARKING_RULES = {
             "exame suplementar, independentemente da nota final.\n\n"
             "Qualquer aluno que obtenha menos de 35% no exame final terá de se submeter ao "
             "exame suplementar, independentemente da nota final.\n\n"
-            "Qualquer aluno que obtenha menos de 35% no nota final não pode realizar o exame suplementar."
+            "Qualquer aluno que obtenha menos de 35% na nota final não pode realizar o exame suplementar."
         ),
     },
     4: {
@@ -85,120 +97,214 @@ MARKING_RULES = {
 }
 
 
-def _build_context(cls: dict, lang: str) -> dict:
-    """Build the Jinja2 context dict for a single class + language."""
-    degree_key = cls.get("degree_level", "bachelor")
-    degree_label = DEGREE_LABELS.get(degree_key, DEGREE_LABELS["bachelor"])[lang]
+def _safe_text(value) -> str:
+    """Return display text without leaking ``None`` or floating-point NaN."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and math.isnan(value):
+        return ""
+    text = str(value).replace("\xa0", " ").strip()
+    return "" if text.casefold() in GENERIC_MISSING else text
 
-    duration = cls.get("duration")
-    contact_hours = f"{duration} hrs" if duration else ""
 
-    marking_rule = cls.get("marking_rule", 1) or 1
-    marking_text = ""
-    if marking_rule in MARKING_RULES:
-        marking_text = MARKING_RULES[marking_rule].get(lang, "")
+def _pick(cls: dict, *keys: str) -> str:
+    """Return the first non-empty known value, enabling language fallbacks."""
+    for key in keys:
+        value = _safe_text(cls.get(key))
+        if value:
+            return value
+    return ""
 
+
+def _attendance_text(degree_key: str, lang: str) -> str:
+    degree = DEGREE_LABELS.get(degree_key, {}).get(lang)
     if lang == "en":
-        return {
-            "academic_unit": cls.get("faculty_en", ""),
-            "programme_name": cls.get("prog_name_en", ""),
-            "degree_level": degree_label,
-            "module_code": cls.get("module_code", ""),
-            "module_name": cls.get("module_name_en", ""),
-            "prerequisites": cls.get("prerequisite_en", "") or "Nil",
-            "medium_of_instruction": cls.get("medium_of_instruction", "English"),
-            "credits": str(cls.get("credits", "")),
-            "contact_hours": contact_hours,
-            "academic_year": cls.get("academic_year", ""),
-            "semester": cls.get("semester", ""),
-            "instructor": cls.get("instructor_en", ""),
-            "email": cls.get("email", ""),
-            "office": cls.get("room_en", ""),
-            "office_phone": cls.get("telephone", ""),
-            "marking_scheme_text": marking_text,
-        }
-    elif lang == "zh":
-        return {
-            "academic_unit": cls.get("faculty_zh", "") or cls.get("faculty_en", ""),
-            "programme_name": cls.get("prog_name_zh", "") or cls.get("prog_name_en", ""),
-            "degree_level": degree_label,
-            "module_code": cls.get("module_code", ""),
-            "module_name": cls.get("module_name_zh", "") or cls.get("module_name_en", ""),
-            "prerequisites": cls.get("prerequisite_zh", "") or cls.get("prerequisite_en", "") or "Nil",
-            "medium_of_instruction": cls.get("medium_of_instruction", "English"),
-            "credits": str(cls.get("credits", "")),
-            "contact_hours": contact_hours,
-            "academic_year": cls.get("academic_year", ""),
-            "semester": cls.get("semester", ""),
-            "instructor": cls.get("instructor_zh", "") or cls.get("instructor_en", ""),
-            "email": cls.get("email", ""),
-            "office": cls.get("room_zh", "") or cls.get("room_en", ""),
-            "office_phone": cls.get("telephone", ""),
-            "marking_scheme_text": marking_text,
-        }
-    else:  # pt
-        return {
-            "academic_unit": cls.get("faculty_pt", "") or cls.get("faculty_en", ""),
-            "programme_name": cls.get("prog_name_pt", "") or cls.get("prog_name_en", ""),
-            "degree_level": degree_label,
-            "module_code": cls.get("module_code", ""),
-            "module_name": cls.get("module_name_pt", "") or cls.get("module_name_en", ""),
-            "prerequisites": cls.get("prerequisite_pt", "") or cls.get("prerequisite_en", "") or "Nil",
-            "medium_of_instruction": cls.get("medium_of_instruction", "English"),
-            "credits": str(cls.get("credits", "")),
-            "contact_hours": contact_hours,
-            "academic_year": cls.get("academic_year", ""),
-            "semester": cls.get("semester", ""),
-            "instructor": cls.get("instructor_pt", "") or cls.get("instructor_en", ""),
-            "email": cls.get("email", ""),
-            "office": cls.get("room_pt", "") or cls.get("room_en", ""),
-            "office_phone": cls.get("telephone", ""),
-            "marking_scheme_text": marking_text,
-        }
+        regulation = (
+            f"the Academic Regulations Governing {degree} Degree Programmes"
+            if degree
+            else "the applicable Academic Regulations"
+        )
+        return (
+            f"Attendance requirements are governed by {regulation} of the Macao Polytechnic "
+            "University. Students who do not meet the attendance requirements for the learning "
+            "module shall be awarded an ‘F’ grade."
+        )
+    if lang == "zh":
+        regulation = f"《{degree}學位課程教務規章》" if degree else "適用的教務規章"
+        return (
+            f"考勤要求按澳門理工大學{regulation}規定執行，未能達至要求者，"
+            "本學科單元/科目成績將被評為不合格（“F”）。"
+        )
+    regulation = (
+        f"«Regulamento Pedagógico dos Cursos Conferentes do Grau de {degree}»"
+        if degree
+        else "o regulamento pedagógico aplicável"
+    )
+    return (
+        f"Os requisitos de assiduidade são cumpridos de acordo com {regulation}; para os alunos "
+        "que não preenchem os requisitos, a classificação da respectiva unidade curricular será "
+        "considerada com a menção de “f” (não aproveitamento)."
+    )
+
+
+def _prerequisite_text(cls: dict, lang: str, keys: tuple[str, ...]) -> str:
+    """Localize missing prerequisites while retaining meaningful source values."""
+    for key in keys:
+        value = cls.get(key)
+        if value is None or (isinstance(value, float) and math.isnan(value)):
+            continue
+        text = str(value).replace("\xa0", " ").strip()
+        if text and text.casefold() not in PREREQUISITE_MISSING:
+            return text
+    return PREREQUISITE_DEFAULTS[lang]
+
+
+def _rule_numbers(cls: dict) -> list[int]:
+    values = cls.get("marking_rules")
+    if values is None:
+        values = [cls.get("marking_rule")]
+    elif not isinstance(values, (list, tuple, set)):
+        values = [values]
+    rules: list[int] = []
+    for value in values:
+        try:
+            rule = int(float(value))
+        except (TypeError, ValueError):
+            continue
+        if rule in (1, 2, 3, 4) and rule not in rules:
+            rules.append(rule)
+    return rules or [1]
+
+
+def _marking_text(cls: dict, lang: str) -> str:
+    parts = [MARKING_RULES[rule][lang] for rule in _rule_numbers(cls) if rule in MARKING_RULES]
+    return "\n\n".join(parts)
+
+
+def _build_context(cls: dict, lang: str) -> dict:
+    """Build a complete, null-safe context for one class and language."""
+    if lang not in TEMPLATES:
+        raise ValueError(f"Unsupported language: {lang}")
+
+    degree_key = _safe_text(cls.get("degree_level")).lower()
+    degree_label = DEGREE_LABELS.get(degree_key, {}).get(lang, "")
+
+    marking_text = _marking_text(cls, lang)
+
+    language_fields = {
+        "en": {
+            "academic_unit": ("faculty_en",),
+            "programme_name": ("prog_name_en",),
+            "module_name": ("module_name_en",),
+            "prerequisites": ("prerequisite_en",),
+            "instructor": ("instructor_en",),
+            "office": ("room_en",),
+        },
+        "zh": {
+            "academic_unit": ("faculty_zh", "faculty_en"),
+            "programme_name": ("prog_name_zh", "prog_name_en"),
+            "module_name": ("module_name_zh", "module_name_en"),
+            "prerequisites": ("prerequisite_zh", "prerequisite_en"),
+            "instructor": ("instructor_zh", "instructor_en"),
+            "office": ("room_zh", "room_en"),
+        },
+        "pt": {
+            "academic_unit": ("faculty_pt", "faculty_en"),
+            "programme_name": ("prog_name_pt", "prog_name_en"),
+            "module_name": ("module_name_pt", "module_name_en"),
+            "prerequisites": ("prerequisite_pt", "prerequisite_en"),
+            "instructor": ("instructor_pt", "instructor_en"),
+            "office": ("room_pt", "room_en"),
+        },
+    }[lang]
+
+    return {
+        "academic_unit": _pick(cls, *language_fields["academic_unit"]),
+        "programme_name": _pick(cls, *language_fields["programme_name"]),
+        "degree_level": degree_label,
+        "attendance_text": _attendance_text(degree_key, lang),
+        # The master workbook identifies offerings by the full Class_Code. For
+        # joint classes this is the stable, ordered list produced by database.py.
+        "module_code": _safe_text(cls.get("class_code")) or _safe_text(cls.get("module_code")),
+        "module_name": _pick(cls, *language_fields["module_name"]),
+        "prerequisites": _prerequisite_text(cls, lang, language_fields["prerequisites"]),
+        # The authoritative workbook has no teaching-language column. The
+        # confirmed display rule is therefore based on the generated version.
+        "medium_of_instruction": LANGUAGE_LABELS[lang],
+        "credits": _safe_text(cls.get("credits")),
+        "contact_hours": _safe_text(cls.get("duration")),
+        "academic_year": _safe_text(cls.get("academic_year")),
+        "semester": _safe_text(cls.get("semester")),
+        "instructor": _pick(cls, *language_fields["instructor"]),
+        "email": _safe_text(cls.get("email")),
+        "office": _pick(cls, *language_fields["office"]),
+        "office_phone": _safe_text(cls.get("telephone")),
+        "marking_scheme_text": marking_text,
+    }
+
+
+def _validate_rendered_docx(doc_bytes: bytes) -> None:
+    """Reject visible unresolved/template-error text before it reaches a download."""
+    forbidden = ("{{", "}}", "{%", "%}", "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre")
+    with zipfile.ZipFile(io.BytesIO(doc_bytes)) as archive:
+        visible_xml = b"\n".join(
+            archive.read(name)
+            for name in archive.namelist()
+            if name.startswith("word/") and name.endswith(".xml")
+        ).decode("utf-8", errors="ignore")
+    matches = [token for token in forbidden if token in visible_xml]
+    for bad_value in ("None", "NaN"):
+        if re.search(rf">\s*{bad_value}\s*<", visible_xml, flags=re.IGNORECASE):
+            matches.append(bad_value)
+    if matches:
+        raise ValueError(f"Rendered document contains unresolved text: {', '.join(matches)}")
 
 
 def _render_one(cls: dict, lang: str) -> bytes:
-    """Render a single template and return the raw bytes."""
-    tpl = DocxTemplate(TEMPLATES[lang])
-    ctx = _build_context(cls, lang)
-    tpl.render(ctx)
-    buf = io.BytesIO()
-    tpl.save(buf)
-    return buf.getvalue()
+    template = DocxTemplate(str(TEMPLATES[lang]))
+    template.render(_build_context(cls, lang), jinja_env=STRICT_JINJA)
+    buffer = io.BytesIO()
+    template.save(buffer)
+    doc_bytes = buffer.getvalue()
+    _validate_rendered_docx(doc_bytes)
+    return doc_bytes
 
 
-def generate_batch(classes: list[dict], academic_year: str = "", semester: str = "") -> io.BytesIO:
-    """
-    Generate EN/ZH/PT templates for every class in the list.
-    Saves files to output/ folder and returns a zip archive as BytesIO.
-    """
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    batch_dir = os.path.join(OUTPUT_DIR, f"generated_{timestamp}")
-    os.makedirs(batch_dir, exist_ok=True)
+def _safe_filename_component(value) -> str:
+    text = _safe_text(value) or "UNKNOWN"
+    text = re.sub(r"\s*[,;]+\s*", "+", text)
+    text = re.sub(r"[\\/:*?\"<>|\x00-\x1f]+", "_", text)
+    text = re.sub(r"\s+", "_", text).strip("._")
+    return text or "UNKNOWN"
 
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for cls in classes:
-            # Inject academic_year/semester if provided
+
+def generate_batch(
+    classes: list[dict],
+    academic_year: str = "",
+    semester: str = "",
+    output_dir: str | os.PathLike | None = None,
+) -> io.BytesIO:
+    """Generate EN/ZH/PT documents and return them in a downloadable ZIP."""
+    root = Path(output_dir) if output_dir is not None else OUTPUT_DIR
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    batch_dir = root / f"generated_{timestamp}"
+    batch_dir.mkdir(parents=True, exist_ok=False)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for source_class in classes:
+            cls = dict(source_class)
             if academic_year:
                 cls["academic_year"] = academic_year
             if semester:
                 cls["semester"] = semester
 
-            class_code = cls.get("class_code", "UNKNOWN")
+            class_code = _safe_filename_component(cls.get("class_code"))
             for lang in ("en", "zh", "pt"):
                 filename = f"{class_code}_Module_Outline_{LANG_SUFFIXES[lang]}.docx"
                 doc_bytes = _render_one(cls, lang)
+                (batch_dir / filename).write_bytes(doc_bytes)
+                archive.writestr(filename, doc_bytes)
 
-                # Save to disk
-                filepath = os.path.join(batch_dir, filename)
-                with open(filepath, "wb") as f:
-                    f.write(doc_bytes)
-
-                # Add to zip
-                zf.writestr(filename, doc_bytes)
-
-    zip_buf.seek(0)
-    file_count = len(classes) * 3
-    print(f"  Generated {file_count} file(s) -> {batch_dir}")
-    return zip_buf
+    zip_buffer.seek(0)
+    return zip_buffer

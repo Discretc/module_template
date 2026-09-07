@@ -65,7 +65,13 @@ languages. Generated files are also saved on the server in the `output/` folder.
    This is a one-time step that reads the original university Word templates
    (EN, ZH, PT) and inserts Jinja2 placeholder tags for all auto-filled fields.
 
-        python3 backend/convert_template.py
+        python3 backend/convert_template.py \
+          --source-dir "Module Outline Templates" \
+          --pt-docx "Module Outline Templates/module-outline-template_pt_202305.docx"
+
+   The official Portuguese file is supplied in the legacy `.doc` format. Export
+   it to `.docx` with Microsoft Word or Apple Pages first. Do not use macOS
+   `textutil`: it flattens the Portuguese tables into paragraphs.
 
    This creates three files in `backend/templates/`:
    `template_en.docx`, `template_zh.docx`, `template_pt.docx`
@@ -80,6 +86,17 @@ languages. Generated files are also saved on the server in the `output/` folder.
 6. Open the application in your browser
 
         http://127.0.0.1:5001
+
+
+## Tests
+
+Run the focused generator and API regression tests with:
+
+    PYTHONPATH=backend .venv/bin/python -m unittest discover -s tests -v
+
+The tests cover the official template structure and links, null-safe field
+mapping, degree-specific attendance wording, output filenames, ZIP batch
+contents, and the Flask download route.
 
 
 ## How to Use
@@ -124,18 +141,32 @@ instead of the sample seed data.
 The script will wipe the existing data and replace it with everything in the
 Excel file. Restart the Flask app afterwards.
 
-The Excel file should have one sheet where each row is a class, with columns:
+The master workbook has one sheet where each row is a class association, with
+these authoritative columns (including the source spelling and spaces):
 
-    Faculty_Code | Faculty_Eng | Faculty_Chn | Faculty_Prt
-    Prog_Code | Prog_Eng | Prog_Chn | Prog_Prt
-    Class_Code | Module_Eng | Module_Chn | Module_Prt
-    Prerequisite_Eng | Prerequisite_Chn | Prerequisite_Por
+    Faculty_Code | Faculty _Chn | Faculty _Eng | Faculty _Prt
+    Prog_Code | Prog_Chn | Prog_Eng | Prog_Prt
+    Class_Code | Module_Chn | Module_Eng | Module_Prt
+    Prerequsite_Chn | Prerequsite_Eng | Prerequsite_Por
     Credits | Durations
-    Instructor_Eng | Instructor_Chn | Instructor_Prt
-    Email | Room_Eng | Room_Chn | Room_Prt | Telephone
+    Instructor_Chn | Instructor_Eng | Instructor_Prt
+    Email | Room_Chn | Room_Eng | Room_Prt | Telephone | Rule | Joint_Relationship
 
-If your file uses different column header names, open `backend/import_excel.py`
-and update the `COLUMN_MAP` dictionary at the top of the file.
+The importer validates the headings before replacing the database and retains a
+small set of legacy aliases for older files. `Rule` supports values 1–4; blank
+or unknown values insert no condition-standard text, and unknown values are
+reported as import warnings.
+
+`Joint_Relationship` contains related full class codes separated by commas. The
+application treats reciprocal or one-way references as an undirected group and
+generates one outline per connected group. Programme names and full class codes
+are combined in stable class-code order with duplicates removed.
+
+The current master workbook has no academic-year, semester, or teaching-language
+column. The interface therefore supplies a rolling academic-year range and the
+selected semester. Generated language fields display `English`, `中文`, and
+`Português` respectively. Missing prerequisites display `Nil`, `無`, and
+`Não tem`.
 
 
 ## Reseeding the Database (development)
