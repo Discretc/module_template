@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from rules import RuleValidationError, normalize_rule_code
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "module_outlines.db"
@@ -45,7 +47,7 @@ COLUMN_MAP = {
     "room_en": "Room_Eng",
     "room_pt": "Room_Prt",
     "telephone": "Telephone",
-    "rule_value": "Rule",
+    "rule_code": "Rule",
     "joint_relationship": "Joint_Relationship",
 }
 
@@ -58,7 +60,7 @@ COLUMN_ALIASES = {
     "prerequisite_zh": ("Prerequisite_Chn",),
     "prerequisite_en": ("Prerequisite_Eng",),
     "prerequisite_pt": ("Prerequisite_Por",),
-    "rule_value": ("Marking_Rule",),
+    "rule_code": ("Marking_Rule",),
 }
 
 OPTIONAL_COLUMNS = {
@@ -68,7 +70,6 @@ OPTIONAL_COLUMNS = {
 }
 
 MISSING_TEXT = {"", "none", "nan", "null", "n/a", "na", "not applicable", "-", "--"}
-SUPPORTED_RULES = {1, 2, 3, 4}
 
 
 def _clean(value, default=""):
@@ -99,16 +100,9 @@ def derive_degree_level(prog_name_en: str) -> str:
     return "bachelor"
 
 
-def normalize_rule(value) -> tuple[str, int, bool]:
-    """Return raw text, supported rule number, and whether it was unknown."""
-    raw = _clean(value)
-    if not raw:
-        return "", 1, False
-    match = re.fullmatch(r"(?:rule\s*)?([1-4])(?:\.0)?", raw, flags=re.IGNORECASE)
-    if match:
-        rule = int(match.group(1))
-        return raw, rule, False
-    return raw, 1, True
+def normalize_rule(value) -> int:
+    """Compatibility wrapper around the canonical strict normalizer."""
+    return normalize_rule_code(value)
 
 
 def normalize_relationship(value, class_code: str = "") -> str:
@@ -141,6 +135,25 @@ def _new_database(path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _validated_rule_codes(df: pd.DataFrame) -> dict[int, int]:
+    header = next(
+        candidate
+        for candidate in (COLUMN_MAP["rule_code"],) + COLUMN_ALIASES["rule_code"]
+        if candidate in df.columns
+    )
+    values: dict[int, int] = {}
+    errors: list[str] = []
+    for row_number, (index, row) in enumerate(df.iterrows(), start=2):
+        class_code = _clean(row.get(COLUMN_MAP["class_code"])) or "unknown class"
+        try:
+            values[index] = normalize_rule_code(row.get(header))
+        except RuleValidationError as exc:
+            errors.append(f"row {row_number} ({class_code}): {exc}")
+    if errors:
+        raise ValueError("Invalid Rule values; import was not applied:\n" + "\n".join(errors))
+    return values
+
+
 def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> dict:
     """Validate and atomically replace the database from the master workbook."""
     result = {
@@ -155,6 +168,7 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
     df = pd.read_excel(excel_path, sheet_name=SHEET, dtype=object)
     df.columns = [str(column).strip() for column in df.columns]
     _validate_headers(df)
+    validated_rules = _validated_rule_codes(df)
     result["total_rows"] = len(df)
 
     destination = Path(db_path or DB_PATH)
@@ -215,11 +229,7 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
                 continue
             seen_codes.add(class_code)
 
-            raw_rule, rule_number, unknown_rule = normalize_rule(col(row, "rule_value"))
-            if unknown_rule:
-                result["warnings"].append(
-                    f"class '{class_code}' has unknown Rule value '{raw_rule}'; no rule text will be inserted"
-                )
+            rule_code = validated_rules[row.name]
             relationship = normalize_relationship(col(row, "joint_relationship"), class_code)
             relationships[class_code] = [part.strip() for part in relationship.split(",") if part.strip()]
 
@@ -230,9 +240,9 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
                    (class_code, module_code, module_name_en, module_name_zh, module_name_pt,
                     prerequisite_en, prerequisite_zh, prerequisite_pt, credits, duration,
                     medium_of_instruction, instructor_en, instructor_zh, instructor_pt,
-                    email, room_en, room_zh, room_pt, telephone, marking_rule, rule_value,
+                    email, room_en, room_zh, room_pt, telephone, rule_code,
                     joint_relationship, programme_id, academic_year, semester)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     class_code,
                     class_code.rsplit("-", 1)[0] if "-" in class_code else class_code,
@@ -243,7 +253,7 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
                     col(row, "medium_of_instruction"),
                     col(row, "instructor_en"), col(row, "instructor_zh"), col(row, "instructor_pt"),
                     col(row, "email"), col(row, "room_en"), col(row, "room_zh"), col(row, "room_pt"),
-                    col(row, "telephone"), rule_number, raw_rule, relationship, programme_id,
+                    col(row, "telephone"), rule_code, relationship, programme_id,
                     col(row, "academic_year"), col(row, "semester"),
                 ),
             )

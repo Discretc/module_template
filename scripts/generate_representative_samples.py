@@ -13,7 +13,7 @@ from generator import LANG_SUFFIXES, _render_one  # noqa: E402
 OUTPUT_DIR = ROOT / "outputs" / "representative"
 
 SAMPLES = {
-    "bachelor": {
+    "rule_1": {
         "class_code": "COMP1123-121",
         "module_code": "COMP1123",
         "faculty_en": "Faculty of Applied Sciences",
@@ -31,9 +31,10 @@ SAMPLES = {
         "instructor_en": "CHAN Tai Man",
         "instructor_zh": "陳大文",
         "instructor_pt": "CHAN Tai Man",
-        "marking_rule": 2,
+        "rule_code": 1,
+        "degree_level": "bachelor",
     },
-    "master": {
+    "rule_2": {
         "class_code": "MSBD5001-131",
         "module_code": "MSBD5001",
         "faculty_en": "Faculty of Applied Sciences",
@@ -51,9 +52,10 @@ SAMPLES = {
         "instructor_en": "LEONG Hou U",
         "instructor_zh": "梁浩宇",
         "instructor_pt": "LEONG Hou U",
-        "marking_rule": 3,
+        "rule_code": 2,
+        "degree_level": "master",
     },
-    "doctoral": {
+    "rule_3": {
         "class_code": "PHD7001-001",
         "module_code": "PHD7001",
         "faculty_en": "Faculty of Applied Sciences",
@@ -71,9 +73,10 @@ SAMPLES = {
         "instructor_en": "Example Lecturer",
         "instructor_zh": "示例教師",
         "instructor_pt": "Docente de Exemplo",
-        "marking_rule": 4,
+        "rule_code": 3,
+        "degree_level": "doctoral",
     },
-    "joint": {
+    "rule_4": {
         "class_code": "COMP111-111, COMP1121-111, COMP1121-114",
         "class_codes": ["COMP111-111", "COMP1121-111", "COMP1121-114"],
         "module_code": "COMP111 / COMP1121",
@@ -92,13 +95,16 @@ SAMPLES = {
         "instructor_en": "NG POU IOK",
         "instructor_zh": "吳寶玉",
         "instructor_pt": "NG POU IOK",
-        "marking_rules": [1],
+        "rule_code": 4,
+        "degree_level": "bachelor",
     },
 }
 
 
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for existing in OUTPUT_DIR.glob("*.docx"):
+        existing.unlink()
     common = {
         "degree_level": "",
         "medium_of_instruction": "English",
@@ -112,10 +118,10 @@ def main() -> None:
         "room_pt": "M505",
         "telephone": "8599-0000",
     }
-    for degree, specific in SAMPLES.items():
-        module = {**common, **specific, "degree_level": degree}
+    for scenario, specific in SAMPLES.items():
+        module = {**common, **specific}
         for language in ("en", "zh", "pt"):
-            filename = f"{degree}_{LANG_SUFFIXES[language]}.docx"
+            filename = f"{scenario}_{LANG_SUFFIXES[language]}.docx"
             (OUTPUT_DIR / filename).write_bytes(_render_one(module, language))
     print(f"Wrote {len(SAMPLES) * 3} samples to {OUTPUT_DIR}")
 

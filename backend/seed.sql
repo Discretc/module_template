@@ -22,7 +22,7 @@ INSERT INTO programmes (code, name_en, name_zh, name_pt, degree_level, faculty_i
 INSERT INTO classes (class_code, module_code, module_name_en, module_name_zh, module_name_pt,
     prerequisite_en, prerequisite_zh, prerequisite_pt, credits, duration,
     instructor_en, instructor_zh, instructor_pt, email, room_en, room_zh, room_pt, telephone,
-    marking_rule, programme_id) VALUES
+    rule_code, programme_id) VALUES
     ('COMP1123-121', 'COMP1123', 'Computer Organization', '計算機組織', 'Organização de Computadores',
         'Nil', '無', 'Nil', 3, 45,
         'CHAN Tai Man', '陳大文', 'CHAN Tai Man', 'tmchan@mpu.edu.mo',

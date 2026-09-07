@@ -152,10 +152,21 @@ these authoritative columns (including the source spelling and spaces):
     Instructor_Chn | Instructor_Eng | Instructor_Prt
     Email | Room_Chn | Room_Eng | Room_Prt | Telephone | Rule | Joint_Relationship
 
-The importer validates the headings before replacing the database and retains a
-small set of legacy aliases for older files. `Rule` supports values 1–4; blank
-or unknown values insert no condition-standard text, and unknown values are
-reported as import warnings.
+The importer validates the headings and every `Rule` value before replacing the
+database. `Rule` is stored as `rule_code INTEGER NOT NULL` with a database check
+constraint limiting it to 1–4. Whole-number Excel values such as `2` and `2.0`
+and clear legacy labels such as `Rule TWO` are normalized. Blank, fractional,
+unknown, and out-of-range values reject the complete import with row-specific
+errors; they are never treated as Rule 1.
+
+Rule 1 inserts no marking-rule paragraph. Rules 2–4 insert the approved fixed
+English, Chinese, or Portuguese statements as separate Word paragraphs. Joint
+class members must have the same rule code; a conflict reports each class code
+and stops that outline from being generated.
+
+Legacy databases with a valid `marking_rule` are migrated to `rule_code`.
+Records without a valid legacy value are recorded in `rule_migration_review`
+and block normal database use until reviewed, rather than receiving a default.
 
 `Joint_Relationship` contains related full class codes separated by commas. The
 application treats reciprocal or one-way references as an undirected group and

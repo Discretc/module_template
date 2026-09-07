@@ -105,7 +105,7 @@ def _convert_common(
             _set_paragraph_text(paragraph, "{{ attendance_text }}")
             attendance_found = True
         elif marking_placeholder in stripped:
-            _set_paragraph_text(paragraph, "{{ marking_scheme_text }}")
+            _set_paragraph_text(paragraph, "__MARKING_RULE_BLOCK__")
             paragraph.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.LEFT
             marking_found = True
         elif stripped in lecturer_placeholders:

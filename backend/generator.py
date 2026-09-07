@@ -7,11 +7,15 @@ import math
 import os
 import re
 import zipfile
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
 
 from docxtpl import DocxTemplate
 from jinja2 import Environment, StrictUndefined
+from lxml import etree
+
+from rules import JointRuleConflictError, get_rule_paragraphs, normalize_rule_code
 
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -39,62 +43,7 @@ PREREQUISITE_MISSING = GENERIC_MISSING | {
     "não tem", "nao tem", "sem pré-requisitos", "sem pre-requisitos",
 }
 PREREQUISITE_DEFAULTS = {"en": "Nil", "zh": "無", "pt": "Não tem"}
-
-
-# Rule 1 = blank; Rule 2 = final<35 resit; Rule 3 = coursework and final
-# thresholds; Rule 4 = coursework or final threshold causes module failure.
-MARKING_RULES = {
-    2: {
-        "en": (
-            "Students with a score of less than 35 in the final examination must take the "
-            "resit examination even if the overall score for the learning module is 50 or above."
-        ),
-        "zh": "若學生期末考試分數為35分以下，即使其總分達50分或以上，學生必須參加補考。",
-        "pt": (
-            "Qualquer aluno que obtenha menos de 35% no exame final terá de se submeter ao "
-            "exame suplementar, independentemente da nota final."
-        ),
-    },
-    3: {
-        "en": (
-            "Students with an overall score of less than 35 in the coursework must take the "
-            "resit examination even if the overall score for the module is 50 or above.\n\n"
-            "Students with a score of less than 35 in the final examination must take the "
-            "resit examination even if the overall score for the module is 50 or above.\n\n"
-            "Students with an overall final grade of less than 35 are NOT allowed to take the resit examination."
-        ),
-        "zh": (
-            "若學生總體平時分數為35分以下，即使其總分達50分或以上，學生必須參加補考。\n\n"
-            "若學生期末考試分數為35分以下，即使其總分達50分或以上，學生必須參加補考。\n\n"
-            "若學生總成績為35分以下，學生不能參加補考。"
-        ),
-        "pt": (
-            "Qualquer aluno que obtenha menos de 35% na avaliação contínua terá de se submeter ao "
-            "exame suplementar, independentemente da nota final.\n\n"
-            "Qualquer aluno que obtenha menos de 35% no exame final terá de se submeter ao "
-            "exame suplementar, independentemente da nota final.\n\n"
-            "Qualquer aluno que obtenha menos de 35% na nota final não pode realizar o exame suplementar."
-        ),
-    },
-    4: {
-        "en": (
-            "Students with an overall score of less than 35 in the coursework will fail the module "
-            "even if the overall score for the module is 50 or above.\n\n"
-            "Students with a score of less than 35 in the final examination will fail the module "
-            "even if the overall score for the module is 50 or above."
-        ),
-        "zh": (
-            "若學生總體平時分數為35分以下，即使其總分達50分或以上，學科單元之成績作不及格處理。\n\n"
-            "若學生期末考試分數為35分以下，即使其總分達50分或以上，學科單元之成績作不及格處理。"
-        ),
-        "pt": (
-            "Qualquer aluno que obtenha menos de 35% na avaliação contínua vai reprovar ao módulo, "
-            "independentemente da nota final.\n\n"
-            "Qualquer aluno que obtenha menos de 35% no exame final vai reprovar ao módulo, "
-            "independentemente da nota final."
-        ),
-    },
-}
+MARKING_RULE_MARKER = "__MARKING_RULE_BLOCK__"
 
 
 def _safe_text(value) -> str:
@@ -159,26 +108,26 @@ def _prerequisite_text(cls: dict, lang: str, keys: tuple[str, ...]) -> str:
     return PREREQUISITE_DEFAULTS[lang]
 
 
-def _rule_numbers(cls: dict) -> list[int]:
-    values = cls.get("marking_rules")
-    if values is None:
-        values = [cls.get("marking_rule")]
-    elif not isinstance(values, (list, tuple, set)):
-        values = [values]
-    rules: list[int] = []
-    for value in values:
-        try:
-            rule = int(float(value))
-        except (TypeError, ValueError):
-            continue
-        if rule in (1, 2, 3, 4) and rule not in rules:
-            rules.append(rule)
-    return rules or [1]
+def _class_rule_code(cls: dict) -> int:
+    values = cls.get("rule_codes")
+    if values is not None:
+        if not isinstance(values, (list, tuple, set)):
+            values = [values]
+        normalized = [normalize_rule_code(value) for value in values]
+        if len(set(normalized)) != 1:
+            codes = list(cls.get("class_codes") or [])
+            detail = ", ".join(
+                f"{codes[index] if index < len(codes) else index + 1}=Rule {code}"
+                for index, code in enumerate(normalized)
+            )
+            raise JointRuleConflictError(f"Joint class has conflicting Rule values: {detail}")
+        return normalized[0]
+    return normalize_rule_code(cls.get("rule_code"))
 
 
-def _marking_text(cls: dict, lang: str) -> str:
-    parts = [MARKING_RULES[rule][lang] for rule in _rule_numbers(cls) if rule in MARKING_RULES]
-    return "\n\n".join(parts)
+def get_marking_rule_paragraphs(rule_code, lang: str) -> tuple[str, ...]:
+    """Return approved ordered rule statements for the selected document language."""
+    return get_rule_paragraphs(rule_code, lang)
 
 
 def _build_context(cls: dict, lang: str) -> dict:
@@ -188,8 +137,6 @@ def _build_context(cls: dict, lang: str) -> dict:
 
     degree_key = _safe_text(cls.get("degree_level")).lower()
     degree_label = DEGREE_LABELS.get(degree_key, {}).get(lang, "")
-
-    marking_text = _marking_text(cls, lang)
 
     language_fields = {
         "en": {
@@ -239,13 +186,47 @@ def _build_context(cls: dict, lang: str) -> dict:
         "email": _safe_text(cls.get("email")),
         "office": _pick(cls, *language_fields["office"]),
         "office_phone": _safe_text(cls.get("telephone")),
-        "marking_scheme_text": marking_text,
     }
+
+
+def _insert_marking_rule_paragraphs(doc_bytes: bytes, paragraphs: tuple[str, ...]) -> bytes:
+    """Replace the template marker with zero or more separate styled Word paragraphs."""
+    source = io.BytesIO(doc_bytes)
+    destination = io.BytesIO()
+    with zipfile.ZipFile(source, "r") as archive, zipfile.ZipFile(destination, "w") as output:
+        found = 0
+        for info in archive.infolist():
+            data = archive.read(info.filename)
+            if info.filename == "word/document.xml":
+                root = etree.fromstring(data)
+                namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+                for text_node in root.xpath("//w:t[contains(., $marker)]", namespaces=namespace, marker=MARKING_RULE_MARKER):
+                    paragraph = text_node.xpath("ancestor::w:p[1]", namespaces=namespace)[0]
+                    parent = paragraph.getparent()
+                    position = parent.index(paragraph)
+                    for offset, statement in enumerate(paragraphs):
+                        clone = deepcopy(paragraph)
+                        clone_text_nodes = clone.xpath(".//w:t", namespaces=namespace)
+                        marker_node = next(
+                            node for node in clone_text_nodes if MARKING_RULE_MARKER in (node.text or "")
+                        )
+                        marker_node.text = (marker_node.text or "").replace(MARKING_RULE_MARKER, statement)
+                        parent.insert(position + offset, clone)
+                    parent.remove(paragraph)
+                    found += 1
+                data = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            output.writestr(info, data)
+    if found != 1:
+        raise ValueError(f"Expected one marking-rule template marker, found {found}")
+    return destination.getvalue()
 
 
 def _validate_rendered_docx(doc_bytes: bytes) -> None:
     """Reject visible unresolved/template-error text before it reaches a download."""
-    forbidden = ("{{", "}}", "{%", "%}", "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre")
+    forbidden = (
+        "{{", "}}", "{%", "%}", MARKING_RULE_MARKER,
+        "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre",
+    )
     with zipfile.ZipFile(io.BytesIO(doc_bytes)) as archive:
         visible_xml = b"\n".join(
             archive.read(name)
@@ -261,11 +242,12 @@ def _validate_rendered_docx(doc_bytes: bytes) -> None:
 
 
 def _render_one(cls: dict, lang: str) -> bytes:
+    paragraphs = get_marking_rule_paragraphs(_class_rule_code(cls), lang)
     template = DocxTemplate(str(TEMPLATES[lang]))
     template.render(_build_context(cls, lang), jinja_env=STRICT_JINJA)
     buffer = io.BytesIO()
     template.save(buffer)
-    doc_bytes = buffer.getvalue()
+    doc_bytes = _insert_marking_rule_paragraphs(buffer.getvalue(), paragraphs)
     _validate_rendered_docx(doc_bytes)
     return doc_bytes
 

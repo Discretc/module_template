@@ -18,6 +18,7 @@ from flask_cors import CORS
 import tempfile
 
 from database import (
+    RuleMigrationRequiredError,
     get_academic_years,
     get_classes,
     get_classes_full,
@@ -27,13 +28,34 @@ from database import (
 )
 from generator import generate_batch
 from import_excel import import_data, COLUMN_MAP
+from rules import JointRuleConflictError, RuleValidationError
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
 CORS(app)
 
 ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
 
-init_db()
+DATABASE_STARTUP_ERROR = None
+try:
+    init_db()
+except RuleMigrationRequiredError as exc:
+    DATABASE_STARTUP_ERROR = str(exc)
+
+
+@app.before_request
+def require_ready_database():
+    if (
+        DATABASE_STARTUP_ERROR
+        and request.path.startswith("/api/")
+        and request.path not in {"/api/import-excel", "/api/column-format"}
+    ):
+        return jsonify({"error": DATABASE_STARTUP_ERROR}), 503
+
+
+@app.errorhandler(JointRuleConflictError)
+@app.errorhandler(RuleValidationError)
+def handle_rule_error(error):
+    return jsonify({"error": str(error)}), 400
 
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
@@ -90,7 +112,10 @@ def api_generate():
     if not classes:
         return jsonify({"error": "No classes found for this selection"}), 404
 
-    zip_buf = generate_batch(classes, academic_year=academic_year, semester=semester)
+    try:
+        zip_buf = generate_batch(classes, academic_year=academic_year, semester=semester)
+    except (JointRuleConflictError, RuleValidationError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
     return send_file(
         zip_buf,
@@ -103,6 +128,7 @@ def api_generate():
 # ── Import Excel data ─────────────────────────────────────────────────────────
 @app.route("/api/import-excel", methods=["POST"])
 def api_import_excel():
+    global DATABASE_STARTUP_ERROR
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
@@ -122,6 +148,7 @@ def api_import_excel():
         result = import_data(tmp_path)
         # Re-initialise the DB connection so new data is visible immediately
         init_db()
+        DATABASE_STARTUP_ERROR = None
         return jsonify(result)
     except Exception as e:
         return jsonify({"error": str(e)}), 400

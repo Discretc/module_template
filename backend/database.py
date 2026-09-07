@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
+
+from rules import (
+    JointRuleConflictError,
+    RuleValidationError,
+    normalize_rule_code,
+    require_consistent_joint_rule,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -22,34 +30,158 @@ def get_connection(db_path: str | os.PathLike | None = None) -> sqlite3.Connecti
     return conn
 
 
-def _migrate_schema(conn: sqlite3.Connection) -> None:
-    """Add master-workbook columns to databases created by earlier releases."""
-    existing = {row[1] for row in conn.execute("PRAGMA table_info(classes)")}
-    additions = {
-        "rule_value": "TEXT",
-        "joint_relationship": "TEXT",
-        "academic_year": "TEXT",
-        "semester": "TEXT",
-        "medium_of_instruction": "TEXT DEFAULT 'English'",
-    }
-    for column, definition in additions.items():
-        if column not in existing:
-            conn.execute(f"ALTER TABLE classes ADD COLUMN {column} {definition}")
+class RuleMigrationRequiredError(RuntimeError):
+    """Raised when legacy rows do not contain an explicit valid rule."""
+
+
+CLASS_COLUMNS = (
+    "id", "class_code", "module_code", "module_name_en", "module_name_zh",
+    "module_name_pt", "prerequisite_en", "prerequisite_zh", "prerequisite_pt",
+    "credits", "duration", "medium_of_instruction", "instructor_en",
+    "instructor_zh", "instructor_pt", "email", "room_en", "room_zh", "room_pt",
+    "telephone", "rule_code", "joint_relationship", "programme_id",
+    "academic_year", "semester",
+)
+
+
+def _record_rule_review(conn: sqlite3.Connection, issues: list[dict]) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS rule_migration_review (
+               class_id INTEGER, class_code TEXT, legacy_value TEXT,
+               reason TEXT NOT NULL, flagged_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    conn.execute("DELETE FROM rule_migration_review")
+    conn.executemany(
+        """INSERT INTO rule_migration_review
+           (class_id, class_code, legacy_value, reason) VALUES (?, ?, ?, ?)""",
+        [
+            (issue["id"], issue["class_code"], issue["legacy_value"], issue["reason"])
+            for issue in issues
+        ],
+    )
     conn.commit()
+
+
+def _create_classes_table(conn: sqlite3.Connection, name: str = "classes") -> None:
+    conn.execute(
+        f"""CREATE TABLE {name} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            class_code TEXT NOT NULL UNIQUE,
+            module_code TEXT NOT NULL,
+            module_name_en TEXT, module_name_zh TEXT, module_name_pt TEXT,
+            prerequisite_en TEXT DEFAULT 'Nil', prerequisite_zh TEXT,
+            prerequisite_pt TEXT DEFAULT 'Nil', credits INTEGER, duration INTEGER,
+            medium_of_instruction TEXT DEFAULT 'English', instructor_en TEXT,
+            instructor_zh TEXT, instructor_pt TEXT, email TEXT, room_en TEXT,
+            room_zh TEXT, room_pt TEXT, telephone TEXT,
+            rule_code INTEGER NOT NULL CHECK (rule_code IN (1, 2, 3, 4)),
+            joint_relationship TEXT,
+            programme_id INTEGER NOT NULL REFERENCES programmes(id),
+            academic_year TEXT, semester TEXT
+        )"""
+    )
+
+
+def _rebuild_classes(conn: sqlite3.Connection, rows: list[dict], rules: dict[int, int]) -> None:
+    existing = set(rows[0]) if rows else {
+        row[1] for row in conn.execute("PRAGMA table_info(classes)")
+    }
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        conn.execute("DROP TABLE IF EXISTS classes_rule_migration")
+        _create_classes_table(conn, "classes_rule_migration")
+        placeholders = ",".join("?" for _ in CLASS_COLUMNS)
+        for row in rows:
+            values = []
+            for column in CLASS_COLUMNS:
+                if column == "rule_code":
+                    value = rules[row["id"]]
+                elif column in existing:
+                    value = row.get(column)
+                elif column == "module_code":
+                    class_code = str(row.get("class_code") or "")
+                    value = class_code.rsplit("-", 1)[0] if "-" in class_code else class_code
+                else:
+                    value = None
+                values.append(value)
+            conn.execute(
+                f"INSERT INTO classes_rule_migration ({','.join(CLASS_COLUMNS)}) VALUES ({placeholders})",
+                values,
+            )
+        conn.execute("DROP TABLE classes")
+        conn.execute("ALTER TABLE classes_rule_migration RENAME TO classes")
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Migrate legacy class rules without inventing values for missing records."""
+    info = list(conn.execute("PRAGMA table_info(classes)"))
+    if not info:
+        return
+    existing = {row[1] for row in info}
+    sql = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='classes'"
+    ).fetchone()[0]
+    constraint_present = bool(
+        re.search(r"rule_code\s+INTEGER\s+NOT\s+NULL", sql or "", re.IGNORECASE)
+        and re.search(r"rule_code\s+IN\s*\(\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*\)", sql or "", re.IGNORECASE)
+    )
+    legacy_columns = {"marking_rule", "rule_value"} & existing
+    if "rule_code" in existing and constraint_present and not legacy_columns:
+        return
+
+    source_column = next(
+        (column for column in ("rule_code", "marking_rule", "rule_value") if column in existing),
+        None,
+    )
+    rows = [dict(row) for row in conn.execute("SELECT * FROM classes ORDER BY id")]
+    rules: dict[int, int] = {}
+    issues: list[dict] = []
+    for row in rows:
+        value = row.get(source_column) if source_column else None
+        try:
+            rules[row["id"]] = normalize_rule_code(value)
+        except RuleValidationError as exc:
+            issues.append(
+                {
+                    "id": row.get("id"),
+                    "class_code": row.get("class_code"),
+                    "legacy_value": None if value is None else str(value),
+                    "reason": str(exc),
+                }
+            )
+    if issues:
+        _record_rule_review(conn, issues)
+        detail = "; ".join(
+            f"{item['class_code'] or item['id']}: {item['reason']}" for item in issues
+        )
+        raise RuleMigrationRequiredError(
+            "Rule migration requires review; see rule_migration_review. " + detail
+        )
+    _rebuild_classes(conn, rows, rules)
 
 
 def init_db(db_path: str | os.PathLike | None = None, seed: bool = True) -> None:
     path = Path(db_path or DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    _migrate_schema(conn)
-    if seed and SEED_PATH.exists():
-        class_count = conn.execute("SELECT COUNT(*) FROM classes").fetchone()[0]
-        faculty_count = conn.execute("SELECT COUNT(*) FROM faculties").fetchone()[0]
-        if class_count == 0 and faculty_count == 0:
-            conn.executescript(SEED_PATH.read_text(encoding="utf-8"))
-    conn.close()
+    try:
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+        _migrate_schema(conn)
+        if seed and SEED_PATH.exists():
+            class_count = conn.execute("SELECT COUNT(*) FROM classes").fetchone()[0]
+            faculty_count = conn.execute("SELECT COUNT(*) FROM faculties").fetchone()[0]
+            if class_count == 0 and faculty_count == 0:
+                conn.executescript(SEED_PATH.read_text(encoding="utf-8"))
+    finally:
+        conn.close()
 
 
 def get_faculties() -> list[dict]:
@@ -148,10 +280,23 @@ def _unique_values(members: list[dict], field: str) -> list:
     return values
 
 
-def _consolidate_group(members: list[dict]) -> dict:
+def _consolidate_group(members: list[dict], strict_rule: bool = True) -> dict:
     members = sorted(members, key=lambda item: item["class_code"])
     first = dict(members[0])
     codes = [member["class_code"] for member in members]
+    try:
+        rule_code = require_consistent_joint_rule(members)
+        rule_conflict = False
+        rule_conflicts = []
+    except JointRuleConflictError:
+        if strict_rule:
+            raise
+        rule_code = None
+        rule_conflict = True
+        rule_conflicts = [
+            {"class_code": member["class_code"], "rule_code": member.get("rule_code")}
+            for member in members
+        ]
     first.update(
         {
             "id": min(member["id"] for member in members),
@@ -161,8 +306,9 @@ def _consolidate_group(members: list[dict]) -> dict:
             "joint_member_count": len(members),
             "joint_member_ids": [member["id"] for member in members],
             "joint_relationship": ", ".join(codes[1:]) if len(codes) > 1 else "",
-            "marking_rules": _unique_values(members, "marking_rule"),
-            "rule_values": _unique_values(members, "rule_value"),
+            "rule_code": rule_code,
+            "rule_conflict": rule_conflict,
+            "rule_conflicts": rule_conflicts,
             "degree_levels": _unique_values(members, "degree_level"),
         }
     )
@@ -219,7 +365,7 @@ def get_classes(programme_id: int | None = None, faculty_id: int | None = None) 
     groups = _selected_groups(rows, programme_id=programme_id, faculty_id=faculty_id)
     summaries = []
     for group in groups:
-        item = _consolidate_group(group)
+        item = _consolidate_group(group, strict_rule=False)
         summaries.append(
             {
                 key: item.get(key)
@@ -227,6 +373,7 @@ def get_classes(programme_id: int | None = None, faculty_id: int | None = None) 
                     "id", "class_code", "class_codes", "module_code",
                     "module_name_en", "module_name_zh", "instructor_en",
                     "prog_name_en", "joint_class", "joint_member_count",
+                    "rule_conflict", "rule_conflicts",
                 )
             }
         )

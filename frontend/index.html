@@ -305,7 +305,8 @@
       opt.value = c.id;
       const name = c.module_name_en || c.module_name_zh || c.class_code;
       const joint = c.joint_class ? ` · joint class (${c.joint_member_count})` : "";
-      opt.textContent = `${c.class_code} – ${name} (${c.instructor_en || ""})${joint}`;
+      const ruleConflict = c.rule_conflict ? " · RULE CONFLICT" : "";
+      opt.textContent = `${c.class_code} – ${name} (${c.instructor_en || ""})${joint}${ruleConflict}`;
       selClass.appendChild(opt);
     });
   }

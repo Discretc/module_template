@@ -40,10 +40,17 @@ CREATE TABLE IF NOT EXISTS classes (
     room_zh          TEXT,
     room_pt          TEXT,
     telephone        TEXT,
-    marking_rule     INTEGER DEFAULT 1,    -- 1=none, 2=final<35 resit, 3=cw+final<35 resit, 4=cw+final<35 fail
-    rule_value       TEXT,                 -- original value from the master workbook's Rule column
+    rule_code        INTEGER NOT NULL CHECK (rule_code IN (1, 2, 3, 4)),
     joint_relationship TEXT,              -- comma-separated related full class codes
     programme_id     INTEGER NOT NULL REFERENCES programmes(id),
     academic_year    TEXT,
     semester         TEXT
+);
+
+CREATE TABLE IF NOT EXISTS rule_migration_review (
+    class_id     INTEGER,
+    class_code   TEXT,
+    legacy_value TEXT,
+    reason       TEXT NOT NULL,
+    flagged_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 import generator  # noqa: E402
+from rules import JointRuleConflictError, RULE_PARAGRAPHS, RuleValidationError  # noqa: E402
 
 
 def sample_class(**overrides):
@@ -45,7 +46,7 @@ def sample_class(**overrides):
         "room_zh": None,
         "room_pt": "",
         "telephone": None,
-        "marking_rule": 3,
+        "rule_code": 3,
     }
     data.update(overrides)
     return data
@@ -78,6 +79,7 @@ class GeneratorTests(unittest.TestCase):
                 self.assertIn("assessment_strategy", package_xml)
                 self.assertIn("studenthandbook", package_xml)
                 self.assertIn("{{ attendance_text }}", package_xml)
+                self.assertIn(generator.MARKING_RULE_MARKER, package_xml)
 
     def test_render_maps_fields_and_preserves_editable_lecturer_slots(self):
         expected = {
@@ -118,7 +120,7 @@ class GeneratorTests(unittest.TestCase):
             prog_name_zh=None,
             prog_name_pt=None,
             duration=float("nan"),
-            marking_rule="invalid",
+            rule_code=1,
         )
         for language in ("en", "zh", "pt"):
             with self.subTest(language=language):
@@ -130,17 +132,47 @@ class GeneratorTests(unittest.TestCase):
                 self.assertNotIn("[博士/碩士/學士]", xml)
                 self.assertNotIn("[Doutor / Mestre", xml)
 
-    def test_all_rules_and_unknown_rule_handling(self):
+    def test_all_rules_render_as_separate_ordered_paragraphs(self):
         for rule in (1, 2, 3, 4):
-            with self.subTest(rule=rule):
-                for language in ("en", "zh", "pt"):
-                    text = generator._build_context(sample_class(marking_rule=rule), language)["marking_scheme_text"]
-                    if rule == 1:
-                        self.assertEqual("", text)
-                    else:
-                        self.assertEqual(generator.MARKING_RULES[rule][language], text)
-        for value in (None, "", "unknown", 99):
-            self.assertEqual("", generator._build_context(sample_class(marking_rule=value), "en")["marking_scheme_text"])
+            for language in ("en", "zh", "pt"):
+                with self.subTest(rule=rule, language=language):
+                    expected = RULE_PARAGRAPHS[rule][language]
+                    self.assertEqual(
+                        expected,
+                        generator.get_marking_rule_paragraphs(rule, language),
+                    )
+                    rendered = generator._render_one(sample_class(rule_code=rule), language)
+                    document = Document(io.BytesIO(rendered))
+                    paragraphs = [paragraph.text for paragraph in document.paragraphs]
+                    for statement in expected:
+                        self.assertIn(statement, paragraphs)
+                    positions = [paragraphs.index(statement) for statement in expected]
+                    self.assertEqual(positions, sorted(positions))
+                    self.assertEqual(len(expected), sum(text in expected for text in paragraphs))
+                    self.assertNotIn(generator.MARKING_RULE_MARKER, word_xml(rendered))
+
+    def test_rule_one_removes_complete_conditional_paragraph(self):
+        document = Document(io.BytesIO(generator._render_one(sample_class(rule_code=1), "en")))
+        paragraphs = [paragraph.text for paragraph in document.paragraphs]
+        heading = next(index for index, text in enumerate(paragraphs) if text.casefold() == "marking scheme")
+        self.assertEqual("required readings", paragraphs[heading + 1].casefold())
+
+    def test_invalid_rule_codes_are_rejected(self):
+        for value in (None, "", "unknown", 0, 5, 2.5):
+            with self.subTest(value=value):
+                with self.assertRaises(RuleValidationError):
+                    generator._render_one(sample_class(rule_code=value), "en")
+
+    def test_conflicting_joint_rules_are_rejected(self):
+        joint = sample_class(
+            class_codes=["COMP1000-111", "COMP1000-112"],
+            rule_codes=[2, 3],
+        )
+        with self.assertRaisesRegex(
+            JointRuleConflictError,
+            r"COMP1000-111=Rule 2.*COMP1000-112=Rule 3",
+        ):
+            generator._render_one(joint, "en")
 
     def test_batch_zip_names_contents_and_input_immutability(self):
         first = sample_class()
@@ -223,6 +255,18 @@ class GenerateRouteTests(unittest.TestCase):
         generate.assert_called_once()
         self.assertEqual("2027/2028", generate.call_args.kwargs["academic_year"])
         self.assertEqual("2", generate.call_args.kwargs["semester"])
+
+    def test_generate_route_reports_joint_rule_conflict(self):
+        conflict = JointRuleConflictError(
+            "Joint class has conflicting Rule values: "
+            "COMP1000-111=Rule 2, COMP1000-112=Rule 3"
+        )
+        with patch.object(self.app_module, "get_classes_full", side_effect=conflict):
+            response = self.client.post("/api/generate", json={"class_ids": [7]})
+
+        self.assertEqual(400, response.status_code)
+        self.assertIn("COMP1000-111=Rule 2", response.get_json()["error"])
+        self.assertIn("COMP1000-112=Rule 3", response.get_json()["error"])
 
 
 if __name__ == "__main__":
