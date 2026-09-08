@@ -84,8 +84,8 @@ class GeneratorTests(unittest.TestCase):
     def test_render_maps_fields_and_preserves_editable_lecturer_slots(self):
         expected = {
             "en": ("Faculty & Science", "Master of Testing", "Master’s", "Nil", "English"),
-            "zh": ("應用科學學院", "測試碩士學位課程", "碩士", "無", "中文"),
-            "pt": ("Faculdade de Ciências Aplicadas", "Mestrado em Testes", "Mestre", "Não tem", "Português"),
+            "zh": ("應用科學學院", "測試碩士學位課程", "碩士", "無", "English"),
+            "pt": ("Faculdade de Ciências Aplicadas", "Mestrado em Testes", "Mestre", "Não tem", "English"),
         }
         for language in ("en", "zh", "pt"):
             with self.subTest(language=language):
@@ -109,6 +109,32 @@ class GeneratorTests(unittest.TestCase):
                 for forbidden in ("{{", "}}", "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre"):
                     self.assertNotIn(forbidden, xml)
                 self.assertNotRegex(xml, r">\s*None\s*<")
+
+    def test_document_language_does_not_fabricate_medium_of_instruction(self):
+        for language in ("en", "zh", "pt"):
+            with self.subTest(language=language):
+                document = Document(
+                    io.BytesIO(
+                        generator._render_one(
+                            sample_class(medium_of_instruction=None, rule_code=1),
+                            language,
+                        )
+                    )
+                )
+                self.assertEqual("", document.tables[0].rows[4].cells[1].text)
+
+    def test_authoritative_medium_is_preserved_across_document_languages(self):
+        for language in ("en", "zh", "pt"):
+            with self.subTest(language=language):
+                document = Document(
+                    io.BytesIO(
+                        generator._render_one(
+                            sample_class(medium_of_instruction="Cantonese", rule_code=1),
+                            language,
+                        )
+                    )
+                )
+                self.assertEqual("Cantonese", document.tables[0].rows[4].cells[1].text)
 
     def test_missing_and_invalid_values_render_safely(self):
         empty = sample_class(

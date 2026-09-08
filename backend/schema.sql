@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS classes (
     prerequisite_pt  TEXT DEFAULT 'Nil',
     credits          INTEGER,
     duration         INTEGER,               -- contact hours number (e.g. 45)
-    medium_of_instruction TEXT DEFAULT 'English',
+    medium_of_instruction TEXT,
     instructor_en    TEXT,
     instructor_zh    TEXT,
     instructor_pt    TEXT,

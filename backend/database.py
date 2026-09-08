@@ -72,7 +72,7 @@ def _create_classes_table(conn: sqlite3.Connection, name: str = "classes") -> No
             module_name_en TEXT, module_name_zh TEXT, module_name_pt TEXT,
             prerequisite_en TEXT DEFAULT 'Nil', prerequisite_zh TEXT,
             prerequisite_pt TEXT DEFAULT 'Nil', credits INTEGER, duration INTEGER,
-            medium_of_instruction TEXT DEFAULT 'English', instructor_en TEXT,
+            medium_of_instruction TEXT, instructor_en TEXT,
             instructor_zh TEXT, instructor_pt TEXT, email TEXT, room_en TEXT,
             room_zh TEXT, room_pt TEXT, telephone TEXT,
             rule_code INTEGER NOT NULL CHECK (rule_code IN (1, 2, 3, 4)),
@@ -133,8 +133,15 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
         re.search(r"rule_code\s+INTEGER\s+NOT\s+NULL", sql or "", re.IGNORECASE)
         and re.search(r"rule_code\s+IN\s*\(\s*1\s*,\s*2\s*,\s*3\s*,\s*4\s*\)", sql or "", re.IGNORECASE)
     )
+    medium_column = next((row for row in info if row[1] == "medium_of_instruction"), None)
+    medium_default_present = bool(medium_column and medium_column[4] is not None)
     legacy_columns = {"marking_rule", "rule_value"} & existing
-    if "rule_code" in existing and constraint_present and not legacy_columns:
+    if (
+        "rule_code" in existing
+        and constraint_present
+        and not legacy_columns
+        and not medium_default_present
+    ):
         return
 
     source_column = next(

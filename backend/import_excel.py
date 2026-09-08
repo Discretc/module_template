@@ -250,7 +250,7 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
                     col(row, "prerequisite_en"), col(row, "prerequisite_zh"), col(row, "prerequisite_pt"),
                     int(float(credits)) if credits else None,
                     int(float(duration)) if duration else None,
-                    col(row, "medium_of_instruction"),
+                    col(row, "medium_of_instruction", None),
                     col(row, "instructor_en"), col(row, "instructor_zh"), col(row, "instructor_pt"),
                     col(row, "email"), col(row, "room_en"), col(row, "room_zh"), col(row, "room_pt"),
                     col(row, "telephone"), rule_code, relationship, programme_id,

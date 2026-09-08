@@ -168,6 +168,13 @@ Legacy databases with a valid `marking_rule` are migrated to `rule_code`.
 Records without a valid legacy value are recorded in `rule_migration_review`
 and block normal database use until reviewed, rather than receiving a default.
 
+`Medium of Instruction` / `授課語言` / `Língua veicular` is the module's actual
+teaching language, not the generated document language. The authoritative
+master workbook does not supply it, so new imports store it as unknown and the
+corresponding editable Word cell remains blank. Optional legacy
+`Teaching_Language` or `Medium_of_Instruction` columns are preserved when they
+are explicitly supplied.
+
 `Joint_Relationship` contains related full class codes separated by commas. The
 application treats reciprocal or one-way references as an undirected group and
 generates one outline per connected group. Programme names and full class codes

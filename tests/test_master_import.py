@@ -2,9 +2,11 @@ import sqlite3
 import sys
 import tempfile
 import unittest
+from io import BytesIO
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 from openpyxl import Workbook
 
 
@@ -25,6 +27,7 @@ MASTER_HEADERS = [
     "Room_Chn", "Room_Eng", "Room_Prt", "Telephone", "Rule",
     "Joint_Relationship",
 ]
+SUPPLIED_MASTER = Path("/Users/eve/Downloads/Master File to Elvis 20260902.xlsx")
 
 
 def master_row(programme_code, programme_name, class_code, related="", rule=None, prerequisite=None):
@@ -82,6 +85,15 @@ class MasterImportTests(unittest.TestCase):
         self.assertEqual(["COMP1000-111", "COMP1000-112"], joint["class_codes"])
         self.assertEqual("Bachelor One / Bachelor Two", joint["prog_name_en"])
         self.assertEqual(2, joint["rule_code"])
+        standalone = next(item for item in grouped if not item["joint_class"])
+        self.assertEqual("", standalone["joint_relationship"])
+        self.assertEqual("", standalone["medium_of_instruction"])
+        conn = sqlite3.connect(self.database)
+        stored_medium = conn.execute(
+            "SELECT medium_of_instruction FROM classes WHERE class_code = 'DATA5000-111'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertIsNone(stored_medium)
         self.assertEqual(
             [
                 {"class_code": "COMP1000-111", "programme": "Bachelor One"},
@@ -103,6 +115,19 @@ class MasterImportTests(unittest.TestCase):
         values = [row[0] for row in conn.execute("SELECT rule_code FROM classes ORDER BY class_code")]
         conn.close()
         self.assertEqual([2, 2], values)
+
+    def test_optional_teaching_language_is_preserved_when_explicitly_supplied(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(MASTER_HEADERS + ["Teaching_Language"])
+        sheet.append(master_row("P1", "Bachelor One", "COMP1000-111", rule=2) + ["Cantonese"])
+        workbook.save(self.workbook)
+
+        import_excel.import_data(str(self.workbook), self.database)
+        conn = sqlite3.connect(self.database)
+        value = conn.execute("SELECT medium_of_instruction FROM classes").fetchone()[0]
+        conn.close()
+        self.assertEqual("Cantonese", value)
 
     def test_programme_filter_returns_one_complete_joint_outline(self):
         import_excel.import_data(str(self.workbook), self.database)
@@ -176,6 +201,61 @@ class MasterImportTests(unittest.TestCase):
         self.assertEqual(1, columns["rule_code"][3])
         self.assertNotIn("marking_rule", columns)
         self.assertIn("CHECK (rule_code IN (1, 2, 3, 4))", table_sql)
+        self.assertIsNone(columns["medium_of_instruction"][4])
+
+        database.init_db(self.database, seed=False)
+        conn = sqlite3.connect(self.database)
+        repeated = conn.execute(
+            "SELECT class_code, module_code, rule_code, programme_id FROM classes"
+        ).fetchall()
+        conn.close()
+        self.assertEqual([("COMP1000-111", "COMP1000", 2, 1)], repeated)
+
+    def test_legacy_medium_default_is_removed_without_overwriting_real_values(self):
+        conn = sqlite3.connect(self.database)
+        conn.executescript(
+            """
+            CREATE TABLE faculties (id INTEGER PRIMARY KEY, code TEXT UNIQUE, name_en TEXT, name_zh TEXT, name_pt TEXT);
+            CREATE TABLE programmes (id INTEGER PRIMARY KEY, code TEXT UNIQUE, name_en TEXT, name_zh TEXT, name_pt TEXT, degree_level TEXT, faculty_id INTEGER);
+            CREATE TABLE classes (
+                id INTEGER PRIMARY KEY,
+                class_code TEXT NOT NULL UNIQUE,
+                module_code TEXT NOT NULL,
+                medium_of_instruction TEXT DEFAULT 'English',
+                rule_code INTEGER NOT NULL CHECK (rule_code IN (1, 2, 3, 4)),
+                programme_id INTEGER NOT NULL
+            );
+            INSERT INTO faculties VALUES (1, 'FCA', 'Faculty', '', '');
+            INSERT INTO programmes VALUES (1, 'P1', 'Programme', '', '', 'bachelor', 1);
+            INSERT INTO classes VALUES (1, 'COMP1000-111', 'COMP1000', 'Cantonese', 2, 1);
+            """
+        )
+        conn.close()
+
+        database.init_db(self.database, seed=False)
+        database.init_db(self.database, seed=False)
+        conn = sqlite3.connect(self.database)
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(classes)")}
+        value = conn.execute(
+            "SELECT medium_of_instruction FROM classes WHERE class_code = 'COMP1000-111'"
+        ).fetchone()[0]
+        conn.close()
+        self.assertIsNone(columns["medium_of_instruction"][4])
+        self.assertEqual("Cantonese", value)
+
+    def test_legacy_marking_rule_excel_header_normalizes_to_rule_code(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        headers = ["Marking_Rule" if header == "Rule" else header for header in MASTER_HEADERS]
+        sheet.append(headers)
+        sheet.append(master_row("P1", "Bachelor One", "COMP1000-111", rule="Rule TWO"))
+        workbook.save(self.workbook)
+
+        import_excel.import_data(str(self.workbook), self.database)
+        conn = sqlite3.connect(self.database)
+        value = conn.execute("SELECT rule_code FROM classes").fetchone()[0]
+        conn.close()
+        self.assertEqual(2, value)
 
     def test_database_constraint_rejects_invalid_rule_codes(self):
         database.init_db(self.database, seed=False)
@@ -245,6 +325,53 @@ class RuleNormalizationTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, r"row 2 \(COMP1000-111\)"):
                     import_excel.import_data(str(workbook_path), database_path)
                 self.assertEqual(b"existing database sentinel", database_path.read_bytes())
+
+    @unittest.skipUnless(SUPPLIED_MASTER.exists(), "supplied master workbook is unavailable")
+    def test_supplied_master_has_canonical_headers_and_only_rule_value_errors(self):
+        frame = pd.read_excel(SUPPLIED_MASTER, sheet_name=0, dtype=object)
+        frame.columns = [str(column).strip() for column in frame.columns]
+        import_excel._validate_headers(frame)
+        with self.assertRaisesRegex(ValueError, "Invalid Rule values; import was not applied") as error:
+            import_excel.import_data(str(SUPPLIED_MASTER), Path(tempfile.gettempdir()) / "unused-master.db")
+        self.assertNotIn("no column named", str(error.exception).casefold())
+
+
+class AdminImportContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        import app
+
+        cls.app_module = app
+        cls.client = app.app.test_client()
+
+    def test_required_excel_columns_endpoint_uses_importer_mapping(self):
+        response = self.client.get("/api/column-format")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(import_excel.COLUMN_MAP, response.get_json())
+        self.assertEqual("Rule", response.get_json()["rule_code"])
+        self.assertEqual("Joint_Relationship", response.get_json()["joint_relationship"])
+        source = (ROOT / "frontend" / "index.html").read_text(encoding="utf-8")
+        self.assertIn('fetch("/api/column-format")', source)
+        self.assertNotIn("Marking_Rule</strong>", source)
+
+    def test_upload_endpoint_returns_rule_validation_not_sqlite_schema_error(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(MASTER_HEADERS)
+        sheet.append(master_row("P1", "Bachelor One", "COMP1000-111", rule=None))
+        payload = BytesIO()
+        workbook.save(payload)
+        payload.seek(0)
+
+        response = self.client.post(
+            "/api/import-excel",
+            data={"file": (payload, "master.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(400, response.status_code)
+        message = response.get_json()["error"]
+        self.assertIn("row 2 (COMP1000-111): Rule is blank", message)
+        self.assertNotIn("no column named", message.casefold())
 
 
 if __name__ == "__main__":

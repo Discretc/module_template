@@ -34,7 +34,6 @@ DEGREE_LABELS = {
 }
 
 LANG_SUFFIXES = {"en": "EN", "zh": "ZH", "pt": "PT"}
-LANGUAGE_LABELS = {"en": "English", "zh": "中文", "pt": "Português"}
 STRICT_JINJA = Environment(undefined=StrictUndefined, autoescape=True)
 
 GENERIC_MISSING = {"", "none", "nan", "null", "n/a", "na", "not applicable", "-", "--"}
@@ -175,9 +174,10 @@ def _build_context(cls: dict, lang: str) -> dict:
         "module_code": _safe_text(cls.get("class_code")) or _safe_text(cls.get("module_code")),
         "module_name": _pick(cls, *language_fields["module_name"]),
         "prerequisites": _prerequisite_text(cls, lang, language_fields["prerequisites"]),
-        # The authoritative workbook has no teaching-language column. The
-        # confirmed display rule is therefore based on the generated version.
-        "medium_of_instruction": LANGUAGE_LABELS[lang],
+        # This is the module's actual teaching language. It is independent of
+        # the selected document language and remains blank when no source has
+        # supplied it.
+        "medium_of_instruction": _safe_text(cls.get("medium_of_instruction")),
         "credits": _safe_text(cls.get("credits")),
         "contact_hours": _safe_text(cls.get("duration")),
         "academic_year": _safe_text(cls.get("academic_year")),
