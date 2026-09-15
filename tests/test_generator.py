@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 import generator  # noqa: E402
+import convert_template  # noqa: E402
 from rules import JointRuleConflictError, RULE_PARAGRAPHS, RuleValidationError  # noqa: E402
 
 
@@ -68,6 +69,22 @@ class GeneratorTests(unittest.TestCase):
             "zh": "MPU-LMO-C-v02(2023/06)",
             "pt": "MPU-LMO-P-v02(2023/06)",
         }
+        latest_assessment_url = (
+            "https://www.mpu.edu.mo/en/teaching-and-learning-centre/quality-framework/"
+            "student_assessment_and_examinations/assessment_strategy"
+        )
+        expected_assessment_text = {
+            "en": (
+                "The assessment will be conducted following the University’s Assessment Strategy "
+                f"(see {latest_assessment_url}). Passing this learning module indicates that students "
+                "will have attained the ILOs of this learning module and thus acquired its credits."
+            ),
+            "zh": (
+                "有關考評標準按大學的學生考評與評分準則指引進行（詳見"
+                f"{latest_assessment_url}"
+                ")。學生成績合格表示其達到本學科單元/科目的預期學習成效，因而取得相應學分。"
+            ),
+        }
         for language, path in generator.TEMPLATES.items():
             with self.subTest(language=language):
                 document = Document(path)
@@ -80,6 +97,12 @@ class GeneratorTests(unittest.TestCase):
                 self.assertIn("studenthandbook", package_xml)
                 self.assertIn("{{ attendance_text }}", package_xml)
                 self.assertIn(generator.MARKING_RULE_MARKER, package_xml)
+                if language in ("en", "zh"):
+                    self.assertIn(latest_assessment_url, package_xml)
+                    self.assertIn(expected_assessment_text[language], [p.text for p in document.paragraphs])
+                    self.assertIn("https://mpusite.mpu.edu.mo/studenthandbook/", package_xml)
+                    self.assertNotIn("teaching_learning/", package_xml)
+                    self.assertNotIn("student_handbook/", package_xml)
 
     def test_render_maps_fields_and_preserves_editable_lecturer_slots(self):
         expected = {
@@ -109,6 +132,33 @@ class GeneratorTests(unittest.TestCase):
                 for forbidden in ("{{", "}}", "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre"):
                     self.assertNotIn(forbidden, xml)
                 self.assertNotRegex(xml, r">\s*None\s*<")
+
+    def test_generated_en_zh_use_latest_assessment_sources(self):
+        latest_url = (
+            "https://www.mpu.edu.mo/en/teaching-and-learning-centre/quality-framework/"
+            "student_assessment_and_examinations/assessment_strategy"
+        )
+        expected = {
+            "en": (
+                "The assessment will be conducted following the University’s Assessment Strategy "
+                f"(see {latest_url}). Passing this learning module indicates that students will have "
+                "attained the ILOs of this learning module and thus acquired its credits."
+            ),
+            "zh": (
+                "有關考評標準按大學的學生考評與評分準則指引進行（詳見"
+                f"{latest_url}"
+                ")。學生成績合格表示其達到本學科單元/科目的預期學習成效，因而取得相應學分。"
+            ),
+        }
+        for language in ("en", "zh"):
+            with self.subTest(language=language):
+                rendered = generator._render_one(sample_class(), language)
+                document = Document(io.BytesIO(rendered))
+                xml = word_xml(rendered)
+                self.assertIn(expected[language], [p.text for p in document.paragraphs])
+                self.assertIn(latest_url, xml)
+                self.assertNotIn("teaching_learning/", xml)
+                self.assertNotIn("student_handbook/", xml)
 
     def test_document_language_does_not_fabricate_medium_of_instruction(self):
         for language in ("en", "zh", "pt"):
@@ -293,6 +343,20 @@ class GenerateRouteTests(unittest.TestCase):
         self.assertEqual(400, response.status_code)
         self.assertIn("COMP1000-111=Rule 2", response.get_json()["error"])
         self.assertIn("COMP1000-112=Rule 3", response.get_json()["error"])
+
+
+class TemplateConversionTests(unittest.TestCase):
+    def test_en_zh_only_conversion_leaves_portuguese_unwritten(self):
+        with tempfile.TemporaryDirectory() as output_dir:
+            destination = Path(output_dir)
+            convert_template.convert_templates(
+                ROOT / "Module Outline Templates",
+                destination,
+                None,
+            )
+            self.assertTrue((destination / "template_en.docx").is_file())
+            self.assertTrue((destination / "template_zh.docx").is_file())
+            self.assertFalse((destination / "template_pt.docx").exists())
 
 
 if __name__ == "__main__":

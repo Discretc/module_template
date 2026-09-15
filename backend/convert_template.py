@@ -9,6 +9,9 @@ Run from the repository root::
     python backend/convert_template.py \
       --source-dir "Module Outline Templates" \
       --pt-docx "Module Outline Templates/module-outline-template_pt_202305.docx"
+
+When only the English and Chinese official templates changed, preserve the
+existing Portuguese runtime template with ``--skip-pt``.
 """
 
 from __future__ import annotations
@@ -125,10 +128,11 @@ def _convert_common(
     document.save(dst)
 
 
-def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path) -> None:
+def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path | None) -> None:
     en_source = source_dir / "module-outline-template_en_202305.docx"
     zh_source = source_dir / "module-outline-template_zh_202305.docx"
-    for source in (en_source, zh_source, pt_docx):
+    sources = (en_source, zh_source) if pt_docx is None else (en_source, zh_source, pt_docx)
+    for source in sources:
         if not source.is_file():
             raise FileNotFoundError(source)
 
@@ -155,30 +159,31 @@ def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path) -> None
         (1, 3),
     )
 
-    pt_document = Document(pt_docx)
-    pt_columns = len(pt_document.tables[0].columns) if pt_document.tables else 0
-    if pt_columns == 5:
-        pt_value_columns = (1, 4)
-    elif pt_columns == 4:
-        pt_value_columns = (1, 3)
-    else:
-        raise ValueError(
-            f"{pt_docx.name}: expected 4 or 5 metadata columns, found {pt_columns}"
-        )
+    if pt_docx is not None:
+        pt_document = Document(pt_docx)
+        pt_columns = len(pt_document.tables[0].columns) if pt_document.tables else 0
+        if pt_columns == 5:
+            pt_value_columns = (1, 4)
+        elif pt_columns == 4:
+            pt_value_columns = (1, 3)
+        else:
+            raise ValueError(
+                f"{pt_docx.name}: expected 4 or 5 metadata columns, found {pt_columns}"
+            )
 
-    _convert_common(
-        pt_docx,
-        output_dir / "template_pt.docx",
-        (("[nome da unidade académica]", "{{ academic_unit }}"),
-         ("[NOME DA UNIDADE ACADÉMICA]", "{{ academic_unit }}"),
-         ("[designação do curso]", "{{ programme_name }}"),
-         ("[DESIGNAÇÃO DO CURSO]", "{{ programme_name }}")),
-        ("{{ academic_unit }}", "{{ programme_name }}"),
-        "Os requisitos de assiduidade são cumpridos",
-        "[Inserir o critério de classificação]",
-        ("[Caracterização]", "[Inserir a bibliografia]", "[Inserir as referências]"),
-        pt_value_columns,
-    )
+        _convert_common(
+            pt_docx,
+            output_dir / "template_pt.docx",
+            (("[nome da unidade académica]", "{{ academic_unit }}"),
+             ("[NOME DA UNIDADE ACADÉMICA]", "{{ academic_unit }}"),
+             ("[designação do curso]", "{{ programme_name }}"),
+             ("[DESIGNAÇÃO DO CURSO]", "{{ programme_name }}")),
+            ("{{ academic_unit }}", "{{ programme_name }}"),
+            "Os requisitos de assiduidade são cumpridos",
+            "[Inserir o critério de classificação]",
+            ("[Caracterização]", "[Inserir a bibliografia]", "[Inserir as referências]"),
+            pt_value_columns,
+        )
 
 
 def main() -> None:
@@ -191,8 +196,14 @@ def main() -> None:
         default=DEFAULT_SOURCE_DIR / "module-outline-template_pt_202305.docx",
         help="Faithful DOCX export of the official Portuguese .doc file",
     )
+    parser.add_argument(
+        "--skip-pt",
+        action="store_true",
+        help="Regenerate only English and Chinese; leave template_pt.docx untouched",
+    )
     args = parser.parse_args()
-    convert_templates(args.source_dir.resolve(), args.output_dir.resolve(), args.pt_docx.resolve())
+    pt_docx = None if args.skip_pt else args.pt_docx.resolve()
+    convert_templates(args.source_dir.resolve(), args.output_dir.resolve(), pt_docx)
     print(f"Templates written to {args.output_dir.resolve()}")
 
 

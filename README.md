@@ -60,32 +60,49 @@ languages. Generated files are also saved on the server in the `output/` folder.
 
         pip install -r requirements.txt
 
-4. Convert the Word templates into docxtpl templates
-
-   This is a one-time step that reads the original university Word templates
-   (EN, ZH, PT) and inserts Jinja2 placeholder tags for all auto-filled fields.
-
-        python3 backend/convert_template.py \
-          --source-dir "Module Outline Templates" \
-          --pt-docx "Module Outline Templates/module-outline-template_pt_202305.docx"
-
-   The official Portuguese file is supplied in the legacy `.doc` format. Export
-   it to `.docx` with Microsoft Word or Apple Pages first. Do not use macOS
-   `textutil`: it flattens the Portuguese tables into paragraphs.
-
-   This creates three files in `backend/templates/`:
-   `template_en.docx`, `template_zh.docx`, `template_pt.docx`
-
-5. Run the application
+4. Run the application
 
         python3 backend/app.py
 
    The database is created and seeded with sample data automatically on first
    run. The app starts on port **5001**.
 
-6. Open the application in your browser
+5. Open the application in your browser
 
         http://127.0.0.1:5001
+
+
+## Preparing New Official Word Templates
+
+The repository already includes prepared runtime templates in:
+
+- `backend/templates/template_en.docx`
+- `backend/templates/template_zh.docx`
+- `backend/templates/template_pt.docx`
+
+You do not need to run the conversion script during normal setup.
+
+Only run `backend/convert_template.py` when the university provides a new
+official Module Outline template and the runtime templates need to be
+regenerated.
+
+    python3 backend/convert_template.py \
+      --source-dir "Module Outline Templates" \
+      --pt-docx "Module Outline Templates/module-outline-template_pt_202305.docx"
+
+This script copies/prepares the official Word templates and inserts the
+placeholders used by the document generator.
+
+When only the English and Chinese templates changed, preserve the existing
+Portuguese runtime template with `--skip-pt`.
+
+    python3 backend/convert_template.py \
+      --source-dir "Module Outline Templates" \
+      --skip-pt
+
+For Portuguese, if the university supplies only a legacy `.doc` file, first
+open it in Microsoft Word or Apple Pages and export it as `.docx`. Do not use
+macOS `textutil`, because it may damage the document's table structure.
 
 
 ## Tests
