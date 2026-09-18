@@ -8,6 +8,7 @@ import os
 import re
 import zipfile
 from copy import deepcopy
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -16,9 +17,10 @@ from jinja2 import Environment, StrictUndefined
 from lxml import etree
 
 from rules import JointRuleConflictError, get_rule_paragraphs, normalize_rule_code
+from template_storage import configured_template_directory, template_lock
 
 
-TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
+TEMPLATE_DIR = configured_template_directory(Path(__file__).resolve().parent / "templates")
 OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
 
 TEMPLATES = {
@@ -228,6 +230,11 @@ def _validate_rendered_docx(doc_bytes: bytes) -> None:
         "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre",
     )
     with zipfile.ZipFile(io.BytesIO(doc_bytes)) as archive:
+        if archive.testzip():
+            raise ValueError("Rendered document has corrupt ZIP content")
+        for name in archive.namelist():
+            if name.endswith((".xml", ".rels")):
+                etree.fromstring(archive.read(name), parser=etree.XMLParser(resolve_entities=False, no_network=True))
         visible_xml = b"\n".join(
             archive.read(name)
             for name in archive.namelist()
@@ -241,12 +248,14 @@ def _validate_rendered_docx(doc_bytes: bytes) -> None:
         raise ValueError(f"Rendered document contains unresolved text: {', '.join(matches)}")
 
 
-def _render_one(cls: dict, lang: str) -> bytes:
+def _render_one(cls: dict, lang: str, template_path: Path | None = None) -> bytes:
     paragraphs = get_marking_rule_paragraphs(_class_rule_code(cls), lang)
-    template = DocxTemplate(str(TEMPLATES[lang]))
-    template.render(_build_context(cls, lang), jinja_env=STRICT_JINJA)
-    buffer = io.BytesIO()
-    template.save(buffer)
+    # Explicit paths are private staged validation copies, not the active set.
+    with (nullcontext() if template_path is not None else template_lock(TEMPLATE_DIR)):
+        template = DocxTemplate(str(template_path or TEMPLATES[lang]))
+        template.render(_build_context(cls, lang), jinja_env=STRICT_JINJA)
+        buffer = io.BytesIO()
+        template.save(buffer)
     doc_bytes = _insert_marking_rule_paragraphs(buffer.getvalue(), paragraphs)
     _validate_rendered_docx(doc_bytes)
     return doc_bytes
@@ -266,27 +275,60 @@ def generate_batch(
     semester: str = "",
     output_dir: str | os.PathLike | None = None,
 ) -> io.BytesIO:
-    """Generate EN/ZH/PT documents and return them in a downloadable ZIP."""
+    """Package each output member independently using its shared joint content."""
+    # Validate the entire selection before writing any output. A joint conflict
+    # must block all members, including when repeated groups were supplied.
+    packages = {}
+    filenames = {}
+    for source in classes:
+        _class_rule_code(source)
+        codes = source.get("class_codes") or [_safe_text(source.get("class_code"))]
+        codes = list(dict.fromkeys(_safe_text(code) for code in codes))
+        output_codes = source.get("output_class_codes", codes)
+        output_codes = list(dict.fromkeys(_safe_text(code) for code in output_codes))
+        if not output_codes or any(code not in codes for code in output_codes):
+            raise ValueError("Output members must belong to the joint content group")
+        cls = dict(source)
+        cls.pop("output_class_codes", None)
+        cls["class_code"] = ", ".join(codes)
+        if academic_year:
+            cls["academic_year"] = academic_year
+        if semester:
+            cls["semester"] = semester
+        for code in output_codes:
+            filename = _safe_filename_component(code)
+            if filename.casefold() in filenames and filenames[filename.casefold()] != code:
+                raise ValueError(f"Class codes produce the same package filename: {code}")
+            filenames[filename.casefold()] = code
+            if code in packages and packages[code] != cls:
+                raise ValueError(f"Conflicting output data for class code: {code}")
+            packages[code] = cls
+
     root = Path(output_dir) if output_dir is not None else OUTPUT_DIR
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     batch_dir = root / f"generated_{timestamp}"
     batch_dir.mkdir(parents=True, exist_ok=False)
 
     zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for source_class in classes:
-            cls = dict(source_class)
-            if academic_year:
-                cls["academic_year"] = academic_year
-            if semester:
-                cls["semester"] = semester
-
-            class_code = _safe_filename_component(cls.get("class_code"))
-            for lang in ("en", "zh", "pt"):
-                filename = f"{class_code}_Module_Outline_{LANG_SUFFIXES[lang]}.docx"
-                doc_bytes = _render_one(cls, lang)
-                (batch_dir / filename).write_bytes(doc_bytes)
-                archive.writestr(filename, doc_bytes)
+    with template_lock(TEMPLATE_DIR), zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for code, cls in sorted(packages.items()):
+            class_code = _safe_filename_component(code)
+            inner = io.BytesIO()
+            with zipfile.ZipFile(inner, "w", zipfile.ZIP_DEFLATED) as package:
+                for lang in ("en", "zh", "pt"):
+                    filename = f"{class_code}_{LANG_SUFFIXES[lang]}.docx"
+                    doc_bytes = _render_one(cls, lang)
+                    (batch_dir / filename).write_bytes(doc_bytes)
+                    package.writestr(filename, doc_bytes)
+            package_name = f"{class_code}.zip"
+            (batch_dir / package_name).write_bytes(inner.getvalue())
+            archive.writestr(package_name, inner.getvalue())
 
     zip_buffer.seek(0)
     return zip_buffer
+
+
+def batch_download_name(academic_year: str = "", semester: str = "") -> str:
+    year = _safe_filename_component(academic_year) if academic_year else "unspecified_year"
+    term = _safe_filename_component(semester) if semester else "unspecified"
+    return f"module_outlines_{year}_sem{term}.zip"

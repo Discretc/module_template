@@ -97,6 +97,12 @@
     .status { font-size: 0.85rem; margin-top: 0.75rem; min-height: 1.2em; }
     .status.error   { color: #dc2626; }
     .status.success { color: #16a34a; }
+    details > summary { cursor: pointer; font-weight: 600; color: #1e3a5f; }
+    .reference { margin-top: 1rem; font-size: 0.85rem; line-height: 1.5; }
+    .reference p { margin: 0.7rem 0; }
+    input[type="file"], input[type="password"] { width: 100%; max-width: 100%; }
+    input[type="password"] { padding: 0.55rem; border: 1px solid #cbd5e1; border-radius: 6px; }
+    @media (max-width: 600px) { .card { padding: 1.2rem; } .field-row { flex-direction: column; gap: 0; } }
     footer {
       margin-top: auto;
       padding: 1.5rem;
@@ -196,6 +202,30 @@
     </button>
   </div>
   <div id="upload-status" class="status"></div>
+  <details class="reference">
+    <summary>Rule Reference — Rules 1–4</summary>
+    <p>Read-only reminder for preparing and reviewing the Excel master file.</p>
+    <div id="rule-reference" aria-live="polite">Loading rules…</div>
+  </details>
+</div>
+
+<div class="card">
+  <details>
+    <summary>Convert / Update Official Templates — Administrator</summary>
+    <div class="reference">
+      <p>This function is only needed when MPU issues a new official module-outline template.</p>
+      <p>Upload all three official Word templates as DOCX (10 MB maximum each). Portuguese also requires DOCX: export any .doc file using Microsoft Word or Apple Pages first.</p>
+      <p>Conversion validates all languages before activation and backs up the current templates. Administrator access is required.</p>
+    </div>
+    <form id="template-form">
+      <div class="field"><label for="template-token">Administrator token</label><input id="template-token" type="password" autocomplete="off" required /></div>
+      <div class="field"><label for="template-en">English official DOCX</label><input id="template-en" name="en" type="file" accept=".docx" required /></div>
+      <div class="field"><label for="template-zh">Chinese official DOCX</label><input id="template-zh" name="zh" type="file" accept=".docx" required /></div>
+      <div class="field"><label for="template-pt">Portuguese official DOCX</label><input id="template-pt" name="pt" type="file" accept=".docx" required /></div>
+      <button id="btn-convert" class="btn btn-primary" type="submit">Convert &amp; Validate</button>
+    </form>
+    <div id="template-status" class="status" role="status" aria-live="polite"></div>
+  </details>
 </div>
 
 <footer>Module Outline Generator &copy; 2026 Macao Polytechnic University</footer>
@@ -323,21 +353,17 @@
       return;
     }
 
-    let count;
-    if (cid) {
-      count = 1;
-    } else {
-      count = allClasses.length;
-    }
+    const selected = cid ? allClasses.filter(c => String(c.id) === cid) : allClasses;
+    const count = packageCount(selected);
 
     const scope = cid
-      ? "1 selected class"
+      ? "selected class"
       : pid
         ? `all <strong>${count}</strong> class(es) in this programme`
         : `all <strong>${count}</strong> class(es) in this faculty`;
 
-    summaryEl.innerHTML = `Will generate <strong>${count * 3}</strong> files (${scope} &times; 3 languages). Joint classes count as one outline.`;
-    btnGenerate.disabled = false;
+    summaryEl.innerHTML = `Will generate <strong>${count}</strong> class ZIP packages containing <strong>${count * 3}</strong> DOCX files (${scope} &times; 3 languages), inside one download ZIP. Each selected class receives its own package; joint documents show the full joint group.`;
+    btnGenerate.disabled = count === 0;
   }
 
   // ── Generate ───────────────────────────────────────────────────────
@@ -379,7 +405,9 @@
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "Module_Outlines.zip";
+      const disposition = res.headers.get("Content-Disposition") || "";
+      const filename = disposition.match(/filename="?([^";]+)"?/i);
+      a.download = filename ? filename[1] : "module_outlines.zip";
       a.click();
       URL.revokeObjectURL(a.href);
 
@@ -426,7 +454,7 @@
         ? `\nWarnings: ${data.warnings.join("; ")}` : "";
       uploadStatus.textContent =
         `Imported ${data.faculties} faculties, ${data.programmes} programmes, ` +
-        `${data.classes} classes grouped into ${data.outlines} outlines ` +
+        `${data.classes} classes in ${data.outlines} selection groups ` +
         `(${data.joint_groups} joint groups; ${data.skipped} skipped) from ${data.total_rows} rows.` +
         warnings;
       uploadStatus.className = "status success";
@@ -472,6 +500,60 @@
       }
     } catch (_) {}
   })();
+
+  function packageCount(classes) {
+    return new Set(classes.flatMap(c => c.output_class_codes || c.class_codes || [c.class_code])).size;
+  }
+
+  function renderRules(rules, container) {
+    container.replaceChildren();
+    rules.forEach(rule => {
+      const row = document.createElement("p");
+      const label = document.createElement("strong");
+      label.textContent = `Rule ${rule.code} — `;
+      row.appendChild(label);
+      row.appendChild(document.createTextNode(rule.summary));
+      container.appendChild(row);
+    });
+  }
+
+  (async () => {
+    const container = document.getElementById("rule-reference");
+    try {
+      const res = await fetch("/api/rules");
+      if (!res.ok) throw new Error("Rule reference unavailable. Please reload.");
+      renderRules(await res.json(), container);
+    } catch (err) { container.textContent = err.message; }
+  })();
+
+  document.getElementById("template-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = document.getElementById("btn-convert");
+    const status = document.getElementById("template-status");
+    const token = document.getElementById("template-token");
+    button.disabled = true;
+    status.className = "status";
+    status.textContent = "Converting and validating all three templates…";
+    try {
+      const form = new FormData();
+      for (const lang of ["en", "zh", "pt"]) {
+        const file = document.getElementById(`template-${lang}`).files[0];
+        if (!file) throw new Error("Select all three official DOCX templates.");
+        form.append(lang, file);
+      }
+      const res = await fetch("/api/templates/convert", {
+        method: "POST", headers: { "Authorization": `Bearer ${token.value}` }, body: form,
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Template update failed.");
+      status.textContent = `${result.message} Backup reference: ${result.backup_id}`;
+      status.className = "status success";
+      document.getElementById("template-form").reset();
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = "status error";
+    } finally { token.value = ""; button.disabled = false; }
+  });
 </script>
 
 </body>

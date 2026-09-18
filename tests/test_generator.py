@@ -263,16 +263,18 @@ class GeneratorTests(unittest.TestCase):
             )
             with zipfile.ZipFile(archive_buffer) as archive:
                 names = archive.namelist()
-                self.assertEqual(6, len(names))
-                self.assertEqual(6, len(set(names)))
-                self.assertIn("COMP_9999-001_Module_Outline_EN.docx", names)
-                self.assertIn("SAFE-002_Module_Outline_PT.docx", names)
+                self.assertEqual(["COMP_9999-001.zip", "SAFE-002.zip"], names)
+                self.assertEqual(2, len(set(names)))
                 for name in names:
                     self.assertFalse(name.startswith("/"))
                     self.assertNotIn("..", name)
-                    rendered = archive.read(name)
-                    self.assertTrue(rendered.startswith(b"PK"))
-                    self.assertIn("2027/2028", word_xml(rendered))
+                    with zipfile.ZipFile(io.BytesIO(archive.read(name))) as inner:
+                        code = name[:-4]
+                        self.assertEqual([f"{code}_{lang}.docx" for lang in ("EN", "ZH", "PT")], inner.namelist())
+                        for doc_name in inner.namelist():
+                            rendered = inner.read(doc_name)
+                            self.assertTrue(rendered.startswith(b"PK"))
+                            self.assertIn("2027/2028", word_xml(rendered))
             generated = list(Path(output_dir).glob("generated_*/*.docx"))
             self.assertEqual(6, len(generated))
         self.assertEqual(original, first)
@@ -291,10 +293,13 @@ class GeneratorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as output_dir:
             archive = generator.generate_batch([joint], output_dir=output_dir)
             with zipfile.ZipFile(archive) as zipped:
-                self.assertIn(
-                    "COMP111-111+COMP1121-111+COMP1121-114_Module_Outline_EN.docx",
-                    zipped.namelist(),
-                )
+                self.assertEqual([f"{code}.zip" for code in joint["class_codes"]], zipped.namelist())
+                for code in joint["class_codes"]:
+                    with zipfile.ZipFile(io.BytesIO(zipped.read(f"{code}.zip"))) as inner:
+                        self.assertEqual(3, len(inner.namelist()))
+                        for language in ("EN", "ZH", "PT"):
+                            document = Document(io.BytesIO(inner.read(f"{code}_{language}.docx")))
+                            self.assertEqual(joint["class_code"], document.tables[0].cell(1, 1).text)
 
 
 class GenerateRouteTests(unittest.TestCase):
@@ -326,7 +331,8 @@ class GenerateRouteTests(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertEqual("application/zip", response.mimetype)
-        self.assertIn("Module_Outlines.zip", response.headers["Content-Disposition"])
+        self.assertIn("module_outlines_2027_2028_sem2.zip", response.headers["Content-Disposition"])
+        response.close()
         fetch.assert_called_once_with(class_ids=[7])
         generate.assert_called_once()
         self.assertEqual("2027/2028", generate.call_args.kwargs["academic_year"])

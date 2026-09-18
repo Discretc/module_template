@@ -17,6 +17,7 @@ existing Portuguese runtime template with ``--skip-pt``.
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 from docx import Document
@@ -26,6 +27,49 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCE_DIR = BASE_DIR.parent / "Module Outline Templates"
 DEFAULT_OUTPUT_DIR = BASE_DIR / "templates"
+ASSESSMENT_URL = "https://www.mpu.edu.mo/en/teaching-and-learning-centre/quality-framework/student_assessment_and_examinations/assessment_strategy"
+HANDBOOK_URL = "https://mpusite.mpu.edu.mo/studenthandbook/"
+
+
+def _preserve_current_assessment_sources(document, language: str) -> None:
+    """Carry forward the approved EN/ZH wording and links when preparing sources."""
+    if language not in ("en", "zh"):
+        return
+    prefix = "The assessment will be conducted" if language == "en" else "有關考評標準按大學"
+    wording = {
+        "en": f"The assessment will be conducted following the University’s Assessment Strategy (see {ASSESSMENT_URL}). Passing this learning module indicates that students will have attained the ILOs of this learning module and thus acquired its credits.",
+        "zh": f"有關考評標準按大學的學生考評與評分準則指引進行（詳見{ASSESSMENT_URL})。學生成績合格表示其達到本學科單元/科目的預期學習成效，因而取得相應學分。",
+    }
+    for paragraph in document.paragraphs:
+        _replace_visible_pattern(paragraph, r"(?:https?://)?www\.mpu\.edu\.mo/teaching_learning/(?:en|zh)/assessment_strategy\.php", ASSESSMENT_URL)
+        _replace_visible_pattern(paragraph, r"(?:https?://)?www\.mpu\.edu\.mo/student_handbook/", HANDBOOK_URL)
+        if paragraph.text.strip().startswith(prefix):
+            if language == "zh":
+                _replace_visible_pattern(paragraph, "（詳見 +", "（詳見")
+            if paragraph.text.strip() != wording[language]:
+                raise ValueError("Unrecognized assessment wording; administrator review is required")
+    for rel in document.part.rels.values():
+        if rel.is_external:
+            if "assessment_strategy" in rel.target_ref:
+                rel._target = ASSESSMENT_URL
+            elif "student_handbook" in rel.target_ref:
+                rel._target = HANDBOOK_URL
+
+
+def _replace_visible_pattern(paragraph, pattern: str, replacement: str) -> None:
+    """Replace visible text across runs, preserving hyperlinks and run properties."""
+    nodes = paragraph._p.xpath(".//w:t")
+    visible = "".join(node.text or "" for node in nodes)
+    for match in reversed(list(re.finditer(pattern, visible))):
+        cursor = 0
+        for node in nodes:
+            text = node.text or ""
+            end = cursor + len(text)
+            if end > match.start() and cursor < match.end():
+                before = text[:max(0, match.start() - cursor)]
+                after = text[max(0, match.end() - cursor):]
+                node.text = before + (replacement if cursor <= match.start() else "") + after
+            cursor = end
 
 
 def _replace_paragraph_text(paragraph, old: str, new: str) -> bool:
@@ -50,6 +94,8 @@ def _set_paragraph_text(paragraph, text: str) -> None:
             run.text = ""
     else:
         paragraph.add_run(text)
+    for hyperlink in paragraph._p.findall("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}hyperlink"):
+        paragraph._p.remove(hyperlink)
 
 
 def _set_cell_text(table, row: int, col: int, text: str) -> None:
@@ -89,10 +135,31 @@ def _convert_common(
     marking_placeholder: str,
     lecturer_placeholders: tuple[str, ...],
     value_columns: tuple[int, int],
+    language: str,
 ) -> None:
     document = Document(src)
     if len(document.tables) != 6:
         raise ValueError(f"{src.name}: expected 6 tables, found {len(document.tables)}")
+    metadata = document.tables[0]
+    allowed_columns = (4, 5) if language == "pt" else (4,)
+    if len(metadata.rows) != 8 or len(metadata.columns) not in allowed_columns:
+        raise ValueError(f"{src.name}: expected an 8-row metadata table with 4 or 5 columns")
+    anchors = {
+        "Attendance requirements are governed": ("Academic Year", "Module Code", "Learning Module", "Pre-requisite(s)", "Medium of Instruction", "Credits", "Instructor", "Office"),
+        "考勤要求按澳門理工大學": ("學年", "學科單元/科目編號", "學科單元/科目名稱", "先修要求", "授課語言", "學分", "教師姓名", "辦公室"),
+        "Os requisitos de assiduidade são cumpridos": ("Ano lectivo", "Código da unidade curricular", "Nome da unidade curricular", "Pré-requisitos", "Língua veicular", "Créditos", "Nome de docente", "Gabinete"),
+    }
+    for row, label in enumerate(anchors[attendance_prefix]):
+        if metadata.cell(row, 0).text.strip().casefold() != label.casefold():
+            raise ValueError(f"{src.name}: metadata row {row + 1} must be '{label}'")
+    right_labels = {
+        "en": ((0, "Semester"), (5, "Contact Hours"), (6, "Email"), (7, "Office Phone")),
+        "zh": ((0, "學期"), (5, "面授學時"), (6, "電郵"), (7, "辦公室電話")),
+        "pt": ((0, "Semestre"), (5, "Horas lectivas presenciais"), (6, "E-mail"), (7, "N.º de contacto")),
+    }
+    for row, label in right_labels[language]:
+        if metadata.cell(row, value_columns[1] - 1).text.strip().casefold() != label.casefold():
+            raise ValueError(f"{src.name}: metadata row {row + 1} must contain '{label}'")
 
     replacements_found = {target: False for target in required_headers}
     attendance_found = False
@@ -124,43 +191,42 @@ def _convert_common(
         )
 
     _fill_metadata_table(document.tables[0], value_columns)
+    _preserve_current_assessment_sources(document, language)
     dst.parent.mkdir(parents=True, exist_ok=True)
     document.save(dst)
 
 
-def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path | None) -> None:
-    en_source = source_dir / "module-outline-template_en_202305.docx"
-    zh_source = source_dir / "module-outline-template_zh_202305.docx"
-    sources = (en_source, zh_source) if pt_docx is None else (en_source, zh_source, pt_docx)
-    for source in sources:
-        if not source.is_file():
-            raise FileNotFoundError(source)
+def convert_template(src: Path, dst: Path, language: str) -> None:
+    """Prepare one official DOCX using the same logic for CLI and web uploads."""
+    if language == "en":
+        _convert_common(
+            src,
+            dst,
+            (("[Name of academic unit]", "{{ academic_unit }}"),
+             ("[Programme name]", "{{ programme_name }}")),
+            ("{{ academic_unit }}", "{{ programme_name }}"),
+            "Attendance requirements are governed",
+            "[Insert marking scheme]",
+            ("[insert text]",),
+            (1, 3),
+            "en",
+        )
+    elif language == "zh":
+        _convert_common(
+            src,
+            dst,
+            (("[學術單位名稱]", "{{ academic_unit }}"),
+             ("[課程名稱]", "{{ programme_name }}")),
+            ("{{ academic_unit }}", "{{ programme_name }}"),
+            "考勤要求按澳門理工大學",
+            "[插入評分準則]",
+            ("[插入概述]", "[插入書單]", "[插入參考文獻]"),
+            (1, 3),
+            "zh",
+        )
+    elif language == "pt":
 
-    _convert_common(
-        en_source,
-        output_dir / "template_en.docx",
-        (("[Name of academic unit]", "{{ academic_unit }}"),
-         ("[Programme name]", "{{ programme_name }}")),
-        ("{{ academic_unit }}", "{{ programme_name }}"),
-        "Attendance requirements are governed",
-        "[Insert marking scheme]",
-        ("[insert text]",),
-        (1, 3),
-    )
-    _convert_common(
-        zh_source,
-        output_dir / "template_zh.docx",
-        (("[學術單位名稱]", "{{ academic_unit }}"),
-         ("[課程名稱]", "{{ programme_name }}")),
-        ("{{ academic_unit }}", "{{ programme_name }}"),
-        "考勤要求按澳門理工大學",
-        "[插入評分準則]",
-        ("[插入概述]", "[插入書單]", "[插入參考文獻]"),
-        (1, 3),
-    )
-
-    if pt_docx is not None:
-        pt_document = Document(pt_docx)
+        pt_document = Document(src)
         pt_columns = len(pt_document.tables[0].columns) if pt_document.tables else 0
         if pt_columns == 5:
             pt_value_columns = (1, 4)
@@ -168,12 +234,12 @@ def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path | None) 
             pt_value_columns = (1, 3)
         else:
             raise ValueError(
-                f"{pt_docx.name}: expected 4 or 5 metadata columns, found {pt_columns}"
+                f"{src.name}: expected 4 or 5 metadata columns, found {pt_columns}"
             )
 
         _convert_common(
-            pt_docx,
-            output_dir / "template_pt.docx",
+            src,
+            dst,
             (("[nome da unidade académica]", "{{ academic_unit }}"),
              ("[NOME DA UNIDADE ACADÉMICA]", "{{ academic_unit }}"),
              ("[designação do curso]", "{{ programme_name }}"),
@@ -183,7 +249,24 @@ def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path | None) 
             "[Inserir o critério de classificação]",
             ("[Caracterização]", "[Inserir a bibliografia]", "[Inserir as referências]"),
             pt_value_columns,
+            "pt",
         )
+    else:
+        raise ValueError(f"Unsupported template language: {language}")
+
+
+def convert_templates(source_dir: Path, output_dir: Path, pt_docx: Path | None) -> None:
+    sources = {
+        "en": source_dir / "module-outline-template_en_202305.docx",
+        "zh": source_dir / "module-outline-template_zh_202305.docx",
+    }
+    if pt_docx is not None:
+        sources["pt"] = pt_docx
+    for source in sources.values():
+        if not source.is_file():
+            raise FileNotFoundError(source)
+    for language, source in sources.items():
+        convert_template(source, output_dir / f"template_{language}.docx", language)
 
 
 def main() -> None:

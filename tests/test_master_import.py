@@ -135,10 +135,36 @@ class MasterImportTests(unittest.TestCase):
         first_programme = next(item for item in programmes if item["code"] == "P1")
         choices = database.get_classes(programme_id=first_programme["id"])
         self.assertEqual(1, len(choices))
-        self.assertEqual("COMP1000-111, COMP1000-112", choices[0]["class_code"])
+        self.assertEqual("COMP1000-111", choices[0]["class_code"])
+        self.assertEqual(["COMP1000-111", "COMP1000-112"], choices[0]["class_codes"])
         generated = database.get_classes_full(programme_id=first_programme["id"])
         self.assertEqual(1, len(generated))
         self.assertEqual(2, generated[0]["joint_member_count"])
+        self.assertEqual(["COMP1000-111"], generated[0]["output_class_codes"])
+
+    def test_imported_faculty_and_programme_generate_each_joint_member(self):
+        import io
+        import zipfile
+        from docx import Document
+        from generator import generate_batch
+
+        import_excel.import_data(str(self.workbook), self.database)
+        faculty = database.get_faculties()[0]
+        faculty_groups = database.get_classes_full(faculty_id=faculty["id"])
+        archive = generate_batch(faculty_groups, academic_year="2026/2027", semester="1", output_dir=self.root / "output")
+        with zipfile.ZipFile(archive) as outer:
+            self.assertEqual(["COMP1000-111.zip", "COMP1000-112.zip", "DATA5000-111.zip"], outer.namelist())
+            for code in ("COMP1000-111", "COMP1000-112"):
+                with zipfile.ZipFile(io.BytesIO(outer.read(f"{code}.zip"))) as inner:
+                    for lang in ("en", "zh", "pt"):
+                        doc = Document(io.BytesIO(inner.read(f"{code}_{lang.upper()}.docx")))
+                        self.assertEqual("COMP1000-111, COMP1000-112", doc.tables[0].cell(1, 1).text)
+                        expected = next(c for c in faculty_groups if c["joint_class"])[f"prog_name_{lang}"]
+                        self.assertEqual(expected, doc.paragraphs[1].text.strip())
+        programme = next(p for p in database.get_programmes() if p["code"] == "P1")
+        scoped = generate_batch(database.get_classes_full(programme_id=programme["id"]), output_dir=self.root / "output")
+        with zipfile.ZipFile(scoped) as outer:
+            self.assertEqual(["COMP1000-111.zip"], outer.namelist())
 
     def test_dynamic_years_include_imported_and_future_values(self):
         import_excel.import_data(str(self.workbook), self.database)
@@ -327,13 +353,20 @@ class RuleNormalizationTests(unittest.TestCase):
                 self.assertEqual(b"existing database sentinel", database_path.read_bytes())
 
     @unittest.skipUnless(SUPPLIED_MASTER.exists(), "supplied master workbook is unavailable")
-    def test_supplied_master_has_canonical_headers_and_only_rule_value_errors(self):
+    def test_supplied_master_has_canonical_headers_and_validates_current_rules(self):
         frame = pd.read_excel(SUPPLIED_MASTER, sheet_name=0, dtype=object)
         frame.columns = [str(column).strip() for column in frame.columns]
         import_excel._validate_headers(frame)
-        with self.assertRaisesRegex(ValueError, "Invalid Rule values; import was not applied") as error:
-            import_excel.import_data(str(SUPPLIED_MASTER), Path(tempfile.gettempdir()) / "unused-master.db")
-        self.assertNotIn("no column named", str(error.exception).casefold())
+        # This optional external workbook can be corrected between runs. Keep
+        # deterministic invalid-rule coverage in the fixtures above.
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                result = import_excel.import_data(str(SUPPLIED_MASTER), Path(directory) / "master.db")
+            except ValueError as error:
+                self.assertIn("Invalid Rule values; import was not applied", str(error))
+                self.assertNotIn("no column named", str(error).casefold())
+            else:
+                self.assertGreater(result["classes"], 0)
 
 
 class AdminImportContractTests(unittest.TestCase):

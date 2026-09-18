@@ -26,3 +26,16 @@ Module Outline Templates/
 # Generated test files
 /tmp/
 output/
+backend/.template-backups/
+backend/.template-stage-*/
+backend/.template-update.lock
+backend/.template-transaction.json
+
+# Template runtime state, including custom storage located inside this checkout
+.template-backups/
+.template-stage-*/
+.template-update.lock
+.template-transaction.json
+.template-copy-*
+.template-journal-*
+/template-storage/

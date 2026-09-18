@@ -12,6 +12,7 @@ Endpoints:
 """
 
 import os
+import secrets
 from flask import Flask, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
 
@@ -26,11 +27,16 @@ from database import (
     get_programmes,
     init_db,
 )
-from generator import generate_batch
+from generator import TEMPLATE_DIR, batch_download_name, generate_batch
 from import_excel import import_data, COLUMN_MAP
-from rules import JointRuleConflictError, RuleValidationError
+from rules import JointRuleConflictError, RuleValidationError, RULE_PARAGRAPHS
+from template_update import MAX_REQUEST_BYTES, TemplateUpdateError, update_templates
+from werkzeug.exceptions import RequestEntityTooLarge
 
 app = Flask(__name__, static_folder="../frontend", static_url_path="")
+app.config["TEMPLATE_ADMIN_TOKEN"] = os.environ.get("TEMPLATE_ADMIN_TOKEN", "")
+app.config["TEMPLATE_DIR"] = TEMPLATE_DIR
+app.config["TEMPLATE_STORAGE_CONFIGURED"] = bool(os.environ.get("TEMPLATE_STORAGE_DIR", ""))
 CORS(app)
 
 ALLOWED_EXTENSIONS = {".xlsx", ".xls"}
@@ -47,7 +53,7 @@ def require_ready_database():
     if (
         DATABASE_STARTUP_ERROR
         and request.path.startswith("/api/")
-        and request.path not in {"/api/import-excel", "/api/column-format"}
+        and request.path not in {"/api/import-excel", "/api/column-format", "/api/rules", "/api/templates/convert"}
     ):
         return jsonify({"error": DATABASE_STARTUP_ERROR}), 503
 
@@ -88,6 +94,51 @@ def api_academic_years():
     return jsonify(get_academic_years())
 
 
+@app.route("/api/rules")
+def api_rules():
+    """Read-only reference derived directly from the approved document wording."""
+    return jsonify([
+        {"code": code, "summary": " ".join(text["en"]) or "No additional marking-rule condition.",
+         "paragraphs": text}
+        for code, text in sorted(RULE_PARAGRAPHS.items())
+    ])
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def handle_upload_too_large(error):
+    return jsonify({"error": "Template uploads must be at most 10 MB each and 32 MB in total."}), 413
+
+
+@app.route("/api/templates/convert", methods=["POST"])
+def api_convert_templates():
+    token = app.config["TEMPLATE_ADMIN_TOKEN"]
+    if not token:
+        return jsonify({"error": "Template updates are disabled. Ask an administrator to configure TEMPLATE_ADMIN_TOKEN."}), 503
+    provided = request.headers.get("Authorization", "")
+    if not secrets.compare_digest(provided.encode(), f"Bearer {token}".encode()):
+        return jsonify({"error": "An authorized administrator token is required."}), 401
+    if not app.config["TEMPLATE_STORAGE_CONFIGURED"]:
+        return jsonify({"error": "Template updates are disabled until an administrator configures TEMPLATE_STORAGE_DIR on persistent storage."}), 503
+    request.max_content_length = MAX_REQUEST_BYTES
+    try:
+        uploads = {}
+        for lang in ("en", "zh", "pt"):
+            files = request.files.getlist(lang)
+            if len(files) > 1:
+                raise TemplateUpdateError(f"Upload exactly one {lang.upper()} template")
+            if files:
+                uploads[lang] = files[0]
+        backup_id = update_templates(uploads, app.config["TEMPLATE_DIR"])
+        return jsonify({"message": "All EN/ZH/PT templates converted, validated and activated successfully. Previous templates were backed up.", "backup_id": backup_id})
+    except TemplateUpdateError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except RequestEntityTooLarge:
+        raise
+    except Exception:
+        app.logger.error("Template activation failed; check persistent storage and recovery journal")
+        return jsonify({"error": "Template activation failed. Generation is blocked if recovery is incomplete; contact the administrator."}), 500
+
+
 # ── Generate templates ───────────────────────────────────────────────────────
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
@@ -99,7 +150,8 @@ def api_generate():
     academic_year = data.get("academic_year", "")
     semester = data.get("semester", "")
 
-    # Fetch classes based on selection scope
+    # Resolve complete joint content and validate every member's Rule, while
+    # retaining scope-matching output_class_codes for individual packages.
     if class_ids:
         classes = get_classes_full(class_ids=class_ids)
     elif programme_id:
@@ -114,13 +166,13 @@ def api_generate():
 
     try:
         zip_buf = generate_batch(classes, academic_year=academic_year, semester=semester)
-    except (JointRuleConflictError, RuleValidationError) as exc:
+    except (JointRuleConflictError, RuleValidationError, ValueError) as exc:
         return jsonify({"error": str(exc)}), 400
 
     return send_file(
         zip_buf,
         as_attachment=True,
-        download_name="Module_Outlines.zip",
+        download_name=batch_download_name(academic_year, semester),
         mimetype="application/zip",
     )
 

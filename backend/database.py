@@ -349,19 +349,22 @@ def _selected_groups(
     class_ids: list[int] | None = None,
     programme_id: int | None = None,
     faculty_id: int | None = None,
-) -> list[list[dict]]:
+) -> list[tuple[list[dict], list[dict]]]:
     selected_ids = {int(value) for value in (class_ids or [])}
-    selected: list[list[dict]] = []
+    selected = []
     for group in _joint_groups(rows):
-        include = not (selected_ids or programme_id or faculty_id)
+        # Keep the complete component for content and Rule validation, but
+        # preserve the actual members matching the requested output scope.
         if selected_ids:
-            include = any(member["id"] in selected_ids for member in group)
+            output_members = [member for member in group if member["id"] in selected_ids]
         elif programme_id:
-            include = any(member["programme_id"] == programme_id for member in group)
+            output_members = [member for member in group if member["programme_id"] == programme_id]
         elif faculty_id:
-            include = any(member["faculty_id"] == faculty_id for member in group)
-        if include:
-            selected.append(group)
+            output_members = [member for member in group if member["faculty_id"] == faculty_id]
+        else:
+            output_members = group
+        if output_members:
+            selected.append((group, output_members))
     return selected
 
 
@@ -371,10 +374,10 @@ def get_classes(programme_id: int | None = None, faculty_id: int | None = None) 
     conn.close()
     groups = _selected_groups(rows, programme_id=programme_id, faculty_id=faculty_id)
     summaries = []
-    for group in groups:
+    for group, output_members in groups:
         item = _consolidate_group(group, strict_rule=False)
-        summaries.append(
-            {
+        for member in output_members:
+            summary = {
                 key: item.get(key)
                 for key in (
                     "id", "class_code", "class_codes", "module_code",
@@ -383,7 +386,9 @@ def get_classes(programme_id: int | None = None, faculty_id: int | None = None) 
                     "rule_conflict", "rule_conflicts",
                 )
             }
-        )
+            summary.update(id=member["id"], class_code=member["class_code"],
+                           output_class_codes=[member["class_code"]])
+            summaries.append(summary)
     return sorted(summaries, key=lambda item: item["class_code"])
 
 
@@ -392,12 +397,21 @@ def get_classes_full(
     programme_id: int | None = None,
     faculty_id: int | None = None,
 ) -> list[dict]:
-    """Return one consolidated record per standalone class or joint component."""
+    """Return shared joint content with separate, scope-matching output codes.
+
+    class_codes contains the complete component; output_class_codes contains
+    only the members that should receive packages for this selection.
+    """
     conn = get_connection()
     rows = _full_rows(conn)
     conn.close()
     groups = _selected_groups(rows, class_ids, programme_id, faculty_id)
-    return [_consolidate_group(group) for group in groups]
+    content_groups = []
+    for group, output_members in groups:
+        content = _consolidate_group(group)
+        content["output_class_codes"] = [member["class_code"] for member in output_members]
+        content_groups.append(content)
+    return content_groups
 
 
 def get_academic_years(today: date | None = None) -> dict:
