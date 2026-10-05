@@ -21,7 +21,9 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -126,6 +128,28 @@ def _fill_metadata_table(table, value_columns: tuple[int, int]) -> None:
         _set_cell_text(table, row, col, placeholder)
 
 
+def _format_portuguese_metadata_table(table) -> None:
+    """Make the compact PT metadata rows render consistently in Word.
+
+    The Portuguese source is a legacy Word document. Its label paragraphs and
+    the value paragraphs created for Jinja placeholders use different styles,
+    so relying on inherited spacing can make otherwise centered text appear
+    top-heavy in Microsoft Word. Limit the normalization to the first metadata
+    table: the larger lecturer-editable tables retain their official layout.
+    """
+    seen_cells = set()
+    for row in table.rows:
+        for cell in row.cells:
+            if cell._tc in seen_cells:
+                continue
+            seen_cells.add(cell._tc)
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            for paragraph in cell.paragraphs:
+                paragraph.paragraph_format.space_before = Pt(0)
+                paragraph.paragraph_format.space_after = Pt(0)
+                paragraph.paragraph_format.line_spacing = 1.0
+
+
 def _convert_common(
     src: Path,
     dst: Path,
@@ -191,6 +215,8 @@ def _convert_common(
         )
 
     _fill_metadata_table(document.tables[0], value_columns)
+    if language == "pt":
+        _format_portuguese_metadata_table(document.tables[0])
     _preserve_current_assessment_sources(document, language)
     dst.parent.mkdir(parents=True, exist_ok=True)
     document.save(dst)

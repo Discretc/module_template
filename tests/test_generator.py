@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from docx import Document
+from lxml import etree
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -132,6 +133,60 @@ class GeneratorTests(unittest.TestCase):
                 for forbidden in ("{{", "}}", "[Doctoral/Master", "[博士/碩士/學士]", "[Doutor / Mestre"):
                     self.assertNotIn(forbidden, xml)
                 self.assertNotRegex(xml, r">\s*None\s*<")
+
+    def test_portuguese_metadata_cells_remain_vertically_centered_after_render(self):
+        rendered = generator._render_one(
+            sample_class(
+                credits=3,
+                email="ada.lovelace@mpu.edu.mo",
+                telephone="8599-0000",
+            ),
+            "pt",
+        )
+        namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+        ns = {"w": namespace}
+        with zipfile.ZipFile(io.BytesIO(rendered)) as archive:
+            root = etree.fromstring(archive.read("word/document.xml"))
+
+        metadata = root.xpath("//w:body/w:tbl[1]", namespaces=ns)[0]
+        cells = metadata.xpath("./w:tr/w:tc", namespaces=ns)
+        expected_text = [
+            "Ano lectivo", "2026/2027", "Semestre", "1",
+            "Código da unidade curricular", "COMP/9999-001",
+            "Nome da unidade curricular", "Engenharia de Modelos",
+            "Pré-requisitos", "Não tem",
+            "Língua veicular", "English",
+            "Créditos", "3", "Horas lectivas presenciais", "45",
+            "Nome de docente", "Ada Lovelace", "E-mail", "ada.lovelace@mpu.edu.mo",
+            "Gabinete", "M505", "N.º de contacto", "8599-0000",
+        ]
+        self.assertEqual(
+            expected_text,
+            ["".join(cell.xpath(".//w:t/text()", namespaces=ns)).strip() for cell in cells],
+        )
+        self.assertEqual(
+            [("294", "atLeast"), ("557", "atLeast"), ("557", "atLeast"),
+             ("294", "atLeast"), ("294", "atLeast"), ("557", "atLeast"),
+             ("294", "atLeast"), ("294", "atLeast")],
+            [
+                (height.get(f"{{{namespace}}}val"), height.get(f"{{{namespace}}}hRule"))
+                for height in metadata.xpath("./w:tr/w:trPr/w:trHeight", namespaces=ns)
+            ],
+        )
+        for cell in cells:
+            with self.subTest(cell="".join(cell.xpath(".//w:t/text()", namespaces=ns)).strip()):
+                self.assertEqual(
+                    ["center"],
+                    cell.xpath("./w:tcPr/w:vAlign/@w:val", namespaces=ns),
+                )
+                paragraphs = cell.xpath("./w:p", namespaces=ns)
+                self.assertEqual(1, len(paragraphs))
+                spacing = paragraphs[0].xpath("./w:pPr/w:spacing", namespaces=ns)
+                self.assertEqual(1, len(spacing))
+                self.assertEqual("0", spacing[0].get(f"{{{namespace}}}before"))
+                self.assertEqual("0", spacing[0].get(f"{{{namespace}}}after"))
+                self.assertEqual("240", spacing[0].get(f"{{{namespace}}}line"))
+                self.assertEqual("auto", spacing[0].get(f"{{{namespace}}}lineRule"))
 
     def test_generated_en_zh_use_latest_assessment_sources(self):
         latest_url = (
