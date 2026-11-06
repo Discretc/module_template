@@ -108,8 +108,8 @@ class GeneratorTests(unittest.TestCase):
     def test_render_maps_fields_and_preserves_editable_lecturer_slots(self):
         expected = {
             "en": ("Faculty & Science", "Master of Testing", "Master’s", "Nil", "English"),
-            "zh": ("應用科學學院", "測試碩士學位課程", "碩士", "無", "English"),
-            "pt": ("Faculdade de Ciências Aplicadas", "Mestrado em Testes", "Mestre", "Não tem", "English"),
+            "zh": ("應用科學學院", "測試碩士學位課程", "碩士", "無", "中文"),
+            "pt": ("Faculdade de Ciências Aplicadas", "Mestrado em Testes", "Mestre", "Não tem", "Português"),
         }
         for language in ("en", "zh", "pt"):
             with self.subTest(language=language):
@@ -155,7 +155,7 @@ class GeneratorTests(unittest.TestCase):
             "Código da unidade curricular", "COMP/9999-001",
             "Nome da unidade curricular", "Engenharia de Modelos",
             "Pré-requisitos", "Não tem",
-            "Língua veicular", "English",
+            "Língua veicular", "Português",
             "Créditos", "3", "Horas lectivas presenciais", "45",
             "Nome de docente", "Ada Lovelace", "E-mail", "ada.lovelace@mpu.edu.mo",
             "Gabinete", "M505", "N.º de contacto", "8599-0000",
@@ -215,7 +215,7 @@ class GeneratorTests(unittest.TestCase):
                 self.assertNotIn("teaching_learning/", xml)
                 self.assertNotIn("student_handbook/", xml)
 
-    def test_document_language_does_not_fabricate_medium_of_instruction(self):
+    def test_document_version_sets_medium_without_workbook_value(self):
         for language in ("en", "zh", "pt"):
             with self.subTest(language=language):
                 document = Document(
@@ -226,9 +226,9 @@ class GeneratorTests(unittest.TestCase):
                         )
                     )
                 )
-                self.assertEqual("", document.tables[0].rows[4].cells[1].text)
+                self.assertEqual({"en": "English", "zh": "中文", "pt": "Português"}[language], document.tables[0].rows[4].cells[1].text)
 
-    def test_authoritative_medium_is_preserved_across_document_languages(self):
+    def test_document_version_overrides_legacy_medium(self):
         for language in ("en", "zh", "pt"):
             with self.subTest(language=language):
                 document = Document(
@@ -239,7 +239,7 @@ class GeneratorTests(unittest.TestCase):
                         )
                     )
                 )
-                self.assertEqual("Cantonese", document.tables[0].rows[4].cells[1].text)
+                self.assertEqual({"en": "English", "zh": "中文", "pt": "Português"}[language], document.tables[0].rows[4].cells[1].text)
 
     def test_missing_and_invalid_values_render_safely(self):
         empty = sample_class(

@@ -93,6 +93,25 @@ administrator token. The server never returns the token, and the frontend clears
 its password field after every attempt without saving it in browser storage.
 Keep Authorization headers out of any custom proxy/access logging.
 
+For local development, set the secret before starting Flask/Gunicorn:
+
+```bash
+export TEMPLATE_ADMIN_TOKEN="..."
+```
+
+For Railway or similar deployment platforms, add an environment variable in the
+service settings and restart/redeploy the service:
+
+```text
+TEMPLATE_ADMIN_TOKEN=<secret value>
+```
+
+Use a real randomly generated secret in your environment; the examples above are
+placeholders. Do not commit a token or put it in frontend JavaScript. Continue
+to configure `TEMPLATE_STORAGE_DIR` on persistent storage as described below;
+this existing safety requirement also applies to authenticated updates. Enter
+the token manually in the administrator UI each time.
+
 Upload English, Chinese and Portuguese official `.docx` files together and click
 **Convert & Validate**. Each file is limited to 10 MB (32 MB total request). The
 server checks ZIP/XML integrity, structure anchors, required placeholders and
@@ -287,10 +306,15 @@ these authoritative columns (including the source spelling and spaces):
     Faculty_Code | Faculty _Chn | Faculty _Eng | Faculty _Prt
     Prog_Code | Prog_Chn | Prog_Eng | Prog_Prt
     Class_Code | Module_Chn | Module_Eng | Module_Prt
-    Prerequsite_Chn | Prerequsite_Eng | Prerequsite_Por
+    Prerequsite_Code | Prerequsite_Chn | Prerequsite_Eng | Prerequsite_Por
     Credits | Durations
     Instructor_Chn | Instructor_Eng | Instructor_Prt
-    Email | Room_Chn | Room_Eng | Room_Prt | Telephone | Rule | Joint_Relationship
+    Email | Room_Chn | Telephone | Rule | Joint_Relationship
+
+`Room_Eng` and `Room_Prt` are optional legacy columns (present but empty in the
+current workbook). `Prerequsite_Code` is intentionally spelled as in the source
+and maps to the internal `prerequisite_code` field. Do not rename the workbook
+header. No Medium of Instruction column is required.
 
 The importer validates the headings and every `Rule` value before replacing the
 database. `Rule` is stored as `rule_code INTEGER NOT NULL` with a database check
@@ -308,12 +332,55 @@ Legacy databases with a valid `marking_rule` are migrated to `rule_code`.
 Records without a valid legacy value are recorded in `rule_migration_review`
 and block normal database use until reviewed, rather than receiving a default.
 
-`Medium of Instruction` / `授課語言` / `Língua veicular` is the module's actual
-teaching language, not the generated document language. The authoritative
-master workbook does not supply it, so new imports store it as unknown and the
-corresponding editable Word cell remains blank. Optional legacy
-`Teaching_Language` or `Medium_of_Instruction` columns are preserved when they
-are explicitly supplied.
+`Medium of Instruction` / `授課語言` / `Língua veicular` is derived from the
+generated version: EN → `English`, ZH → `中文`, PT → `Português`. This supervisor
+requirement overrides both the previous blank behavior and any legacy teaching
+language value. Legacy stored values are preserved for compatibility, but do not
+drive generated documents; no language-specific database default is needed.
+
+The current authoritative input is `Master File to Elvis 20261030.xlsx`. Rows
+are grouped by the complete `Class_Code`, never by a shortened module code.
+Repeated rows contribute ordered, unique teacher/contact records, prerequisite
+code/name records and joint relationships. All repeated rows must agree on
+faculty, programme, module names, credits, duration, Rule, and any supplied year
+or semester. Conflicts report class code, source heading, values and Excel row
+numbers. The complete workbook is validated before staging a replacement SQLite
+database; failures leave the existing database unchanged.
+
+Previously only the first row for each class was retained and subsequent rows
+were skipped. Now `classes` retains one identity per code, with ordered child
+tables `class_instructors` and `class_prerequisites`. Whole-record deduplication
+keeps name/email/room/telephone associations and prerequisite code/EN/ZH/PT name
+associations intact. First source occurrence controls order; neither names nor
+codes are independently sorted. Existing scalar fields remain for legacy
+compatibility. Startup backfills old scalar records without removing them, and
+repeated startup does not duplicate or overwrite child records.
+
+Teacher names appear one per line. With multiple records, matching numeric owner
+labels in contact cells preserve associations even when a field is missing.
+Shared contact values appear once with all owner labels. `Room_Chn` takes
+precedence for **all EN/ZH/PT documents**, including when an explicit legacy
+translation disagrees. Only records with no Chinese room may fall back to a
+legacy English/Portuguese value. Official cells/styles are retained and grow
+with content.
+
+Prerequisites render as `Localized name (CODE)`, separated by commas in first
+source order. Names fall back to English when the document language is missing.
+Code-only and name-only records display the available part without parentheses.
+Missing prerequisites display `Nil` / `無` / `Não tem`, including legacy sentinel
+values. Duplicated whole pairs are removed without losing distinct codes.
+
+Programme names are also snapshotted per class (`programme_name_en/zh/pt`), so
+a shared programme code cannot overwrite class-specific source wording. Legacy
+databases fall back to the programme lookup. The workbook has two Portuguese
+names for programme `4LCSDI` across different classes; an import warning reports
+them, documents retain their own class wording, and the programme selector uses
+the first source label. Conflicts within the **same** Class_Code still reject the
+entire import. A programme pointing to conflicting faculties also rejects it.
+
+The import summary distinguishes Excel rows, unique classes, child-record counts
+and logical/joint groups. Missing joint references are retained and warned about;
+no class or output package is invented for a missing record.
 
 `Joint_Relationship` contains related full class codes separated by commas. The
 application treats reciprocal or one-way references as an undirected group and
@@ -347,7 +414,8 @@ The **Rule Reference** below Excel import fetches approved wording directly from
 
 The current master workbook has no academic-year, semester, or teaching-language
 column. The interface therefore supplies a rolling academic-year range and the
-selected semester. Unknown medium-of-instruction cells remain blank in all languages. Missing prerequisites display `Nil`, `無`, and
+selected semester. Medium of Instruction follows the generated language
+(`English`, `中文`, `Português`). Missing prerequisites display `Nil`, `無`, and
 `Não tem`.
 
 
@@ -362,3 +430,19 @@ The template-update endpoint accepts multipart fields `en`, `zh`, `pt` and
 `Authorization: Bearer <TEMPLATE_ADMIN_TOKEN>`. Conversion supports the existing
 official six-table format and language anchors. A future structurally different
 template is rejected safely and needs an update to the shared converter.
+
+
+## October 2026 workbook validation
+
+See [the validation report](docs/authoritative-workbook-validation.md) for the
+54-row / 11-class authoritative import, repeated groups, source warnings, test
+results and representative DOCX review. To repeat the isolated import, content,
+ZIP and API checks:
+
+```bash
+python scripts/validate_authoritative_workbook.py path/to/master.xlsx
+```
+
+This writes a separate test database and generated samples under
+`output/master-validation/`; it does not replace the application database or
+modify the workbook. Visual rendering is a separate check.

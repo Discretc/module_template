@@ -21,20 +21,20 @@ from rules import JointRuleConflictError, RuleValidationError  # noqa: E402
 MASTER_HEADERS = [
     "Faculty_Code", "Faculty _Chn", "Faculty _Eng", "Faculty _Prt",
     "Prog_Code", "Prog_Chn", "Prog_Eng", "Prog_Prt", "Class_Code",
-    "Module_Chn", "Module_Eng", "Module_Prt", "Prerequsite_Chn",
+    "Module_Chn", "Module_Eng", "Module_Prt", "Prerequsite_Code", "Prerequsite_Chn",
     "Prerequsite_Eng", "Prerequsite_Por", "Credits", "Durations",
     "Instructor_Chn", "Instructor_Eng", "Instructor_Prt", "Email",
     "Room_Chn", "Room_Eng", "Room_Prt", "Telephone", "Rule",
     "Joint_Relationship",
 ]
-SUPPLIED_MASTER = Path("/Users/eve/Downloads/Master File to Elvis 20260902.xlsx")
+SUPPLIED_MASTER = Path("/Users/eve/Downloads/Master File to Elvis 20261030.xlsx")
 
 
 def master_row(programme_code, programme_name, class_code, related="", rule=None, prerequisite=None):
     return [
         "FCA", "應用科學學院", "Faculty of Applied Sciences", "Faculdade de Ciências Aplicadas",
         programme_code, f"{programme_name}中", programme_name, f"{programme_name} PT", class_code,
-        "模組", "Module", "Módulo", prerequisite, prerequisite, prerequisite,
+        "模組", "Module", "Módulo", None, prerequisite, prerequisite, prerequisite,
         3, 45, "教師", "LECTURER", "DOCENTE", "lecturer@mpu.edu.mo",
         None, None, None, 85990000, rule, related,
     ]

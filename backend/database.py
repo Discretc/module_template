@@ -9,6 +9,8 @@ from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
+from class_records import INSTRUCTOR_FIELDS, PREREQUISITE_FIELDS, instructors, prerequisites, unique_records
+
 from rules import (
     JointRuleConflictError,
     RuleValidationError,
@@ -41,6 +43,7 @@ CLASS_COLUMNS = (
     "instructor_zh", "instructor_pt", "email", "room_en", "room_zh", "room_pt",
     "telephone", "rule_code", "joint_relationship", "programme_id",
     "academic_year", "semester",
+    "programme_name_en", "programme_name_zh", "programme_name_pt",
 )
 
 
@@ -78,7 +81,8 @@ def _create_classes_table(conn: sqlite3.Connection, name: str = "classes") -> No
             rule_code INTEGER NOT NULL CHECK (rule_code IN (1, 2, 3, 4)),
             joint_relationship TEXT,
             programme_id INTEGER NOT NULL REFERENCES programmes(id),
-            academic_year TEXT, semester TEXT
+            academic_year TEXT, semester TEXT,
+            programme_name_en TEXT, programme_name_zh TEXT, programme_name_pt TEXT
         )"""
     )
 
@@ -125,6 +129,13 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     info = list(conn.execute("PRAGMA table_info(classes)"))
     if not info:
         return
+    existing = {row[1] for row in info}
+    for language in ("en", "zh", "pt"):
+        column = f"programme_name_{language}"
+        if column not in existing:
+            conn.execute(f"ALTER TABLE classes ADD COLUMN {column} TEXT")
+    conn.commit()
+    info = list(conn.execute("PRAGMA table_info(classes)"))
     existing = {row[1] for row in info}
     sql = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='table' AND name='classes'"
@@ -175,6 +186,25 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     _rebuild_classes(conn, rows, rules)
 
 
+def _migrate_class_records(conn: sqlite3.Connection) -> None:
+    """Backfill legacy scalars once; retain them for older database consumers."""
+    for row in conn.execute("SELECT * FROM classes ORDER BY id").fetchall():
+        cls = dict(row)
+        for table, fields, records in (
+            ("class_instructors", INSTRUCTOR_FIELDS, instructors(cls)),
+            ("class_prerequisites", PREREQUISITE_FIELDS, prerequisites(cls)),
+        ):
+            if conn.execute(f"SELECT 1 FROM {table} WHERE class_id = ?", (cls["id"],)).fetchone():
+                continue
+            for position, record in enumerate(records):
+                columns = ("class_id", "position") + fields
+                conn.execute(
+                    f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                    (cls["id"], position, *(record[field] for field in fields)),
+                )
+    conn.commit()
+
+
 def init_db(db_path: str | os.PathLike | None = None, seed: bool = True) -> None:
     path = Path(db_path or DB_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +217,7 @@ def init_db(db_path: str | os.PathLike | None = None, seed: bool = True) -> None
             faculty_count = conn.execute("SELECT COUNT(*) FROM faculties").fetchone()[0]
             if class_count == 0 and faculty_count == 0:
                 conn.executescript(SEED_PATH.read_text(encoding="utf-8"))
+        _migrate_class_records(conn)
     finally:
         conn.close()
 
@@ -222,8 +253,10 @@ def _full_rows(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         """
         SELECT
-            c.*, p.code AS prog_code, p.name_en AS prog_name_en,
-            p.name_zh AS prog_name_zh, p.name_pt AS prog_name_pt,
+            c.*, p.code AS prog_code,
+            COALESCE(c.programme_name_en, p.name_en) AS prog_name_en,
+            COALESCE(c.programme_name_zh, p.name_zh) AS prog_name_zh,
+            COALESCE(c.programme_name_pt, p.name_pt) AS prog_name_pt,
             p.degree_level, p.faculty_id,
             f.code AS faculty_code, f.name_en AS faculty_en,
             f.name_zh AS faculty_zh, f.name_pt AS faculty_pt
@@ -233,7 +266,18 @@ def _full_rows(conn: sqlite3.Connection) -> list[dict]:
         ORDER BY c.class_code, c.id
         """
     ).fetchall()
-    return [dict(row) for row in rows]
+    classes = [dict(row) for row in rows]
+    by_id = {cls["id"]: cls for cls in classes}
+    for table, key in (("class_instructors", "instructors"), ("class_prerequisites", "prerequisites")):
+        for record in conn.execute(f"SELECT * FROM {table} ORDER BY class_id, position, id"):
+            cls = by_id.get(record["class_id"])
+            if cls is not None:
+                cls.setdefault(key, []).append(dict(record))
+    # Databases populated by legacy clients after startup still render safely.
+    for cls in classes:
+        cls["instructors"] = instructors(cls)
+        cls["prerequisites"] = prerequisites(cls)
+    return classes
 
 
 def _joint_groups(rows: list[dict]) -> list[list[dict]]:
@@ -333,6 +377,12 @@ def _consolidate_group(members: list[dict], strict_rule: bool = True) -> dict:
     for field in combined_fields:
         first[field] = _unique_text(members, field)
 
+    first["instructors"] = unique_records(
+        [record for member in members for record in instructors(member)], INSTRUCTOR_FIELDS,
+    )
+    first["prerequisites"] = unique_records(
+        [record for member in members for record in prerequisites(member)], PREREQUISITE_FIELDS,
+    )
     for language in ("en", "zh", "pt"):
         first[f"programme_class_pairs_{language}"] = [
             {

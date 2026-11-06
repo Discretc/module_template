@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from class_records import INSTRUCTOR_FIELDS, PREREQUISITE_FIELDS, unique_records
 from rules import RuleValidationError, normalize_rule_code
 
 
@@ -19,7 +20,7 @@ DB_PATH = BASE_DIR / "module_outlines.db"
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 SHEET = 0
 
-# Exact headings in ``Master File to Elvis 20260902.xlsx``. The spelling and
+# Exact headings in ``Master File to Elvis 20261030.xlsx``. The spelling and
 # embedded spaces are intentional and are validated before the database changes.
 COLUMN_MAP = {
     "faculty_code": "Faculty_Code",
@@ -34,6 +35,7 @@ COLUMN_MAP = {
     "module_name_zh": "Module_Chn",
     "module_name_en": "Module_Eng",
     "module_name_pt": "Module_Prt",
+    "prerequisite_code": "Prerequsite_Code",
     "prerequisite_zh": "Prerequsite_Chn",
     "prerequisite_en": "Prerequsite_Eng",
     "prerequisite_pt": "Prerequsite_Por",
@@ -62,6 +64,8 @@ COLUMN_ALIASES = {
     "prerequisite_pt": ("Prerequisite_Por",),
     "rule_code": ("Marking_Rule",),
 }
+
+OPTIONAL_MASTER_FIELDS = {"room_en", "room_pt"}
 
 OPTIONAL_COLUMNS = {
     "academic_year": ("Academic_Year", "Academic Year"),
@@ -121,6 +125,8 @@ def _validate_headers(df: pd.DataFrame) -> None:
     available = set(df.columns)
     missing = []
     for field, authoritative in COLUMN_MAP.items():
+        if field in OPTIONAL_MASTER_FIELDS:
+            continue
         candidates = (authoritative,) + COLUMN_ALIASES.get(field, ())
         if not any(candidate in available for candidate in candidates):
             missing.append(authoritative)
@@ -154,6 +160,88 @@ def _validated_rule_codes(df: pd.DataFrame) -> dict[int, int]:
     return values
 
 
+# These are scalar identities; contacts, prerequisites and joint edges may vary.
+CLASS_METADATA = (
+    "faculty_code", "faculty_zh", "faculty_en", "faculty_pt",
+    "prog_code", "prog_zh", "prog_en", "prog_pt",
+    "module_name_zh", "module_name_en", "module_name_pt",
+    "credits", "duration", "rule_code", "academic_year", "semester",
+)
+
+
+def _aggregate_rows(df, validated_rules):
+    groups = {}
+    errors = []
+    for number, (index, source) in enumerate(df.iterrows(), start=2):
+        row = {field: col(source, field) for field in (*COLUMN_MAP, *OPTIONAL_COLUMNS)}
+        code = row["class_code"]
+        if not code:
+            errors.append(f"row {number}: Class_Code is missing")
+            continue
+        for field in ("faculty_code", "prog_code"):
+            if not row[field]:
+                errors.append(f"row {number} ({code}): {COLUMN_MAP[field]} is missing")
+        row["rule_code"] = validated_rules[index]
+        for field in ("credits", "duration"):
+            try:
+                value = float(row[field]) if row[field] else None
+                if value is not None and (not value.is_integer() or value < 0):
+                    raise ValueError
+                row[field] = int(value) if value is not None else None
+            except (ValueError, OverflowError):
+                errors.append(f"row {number} ({code}): invalid {COLUMN_MAP[field]} {row[field]!r}; expected a non-negative whole number")
+        groups.setdefault(code, []).append((number, row))
+
+    def consistent(rows, fields, label):
+        for field in fields:
+            values = {}
+            for number, row in rows:
+                values.setdefault(row[field], []).append(number)
+            if len(values) > 1:
+                detail = "; ".join(f"{value!r} at rows {numbers}" for value, numbers in values.items())
+                errors.append(f"{label}: conflicting {COLUMN_MAP.get(field, field)}: {detail}")
+
+    for code, rows in groups.items():
+        consistent(rows, CLASS_METADATA, f"Class_Code {code}")
+    # Shared lookups must agree on faculty identity. Programme wording is
+    # snapshotted per class, with cross-class variants reported as warnings.
+    all_rows = [item for rows in groups.values() for item in rows]
+    for identity, fields in (
+        ("faculty_code", ("faculty_zh", "faculty_en", "faculty_pt")),
+        ("prog_code", ("faculty_code",)),
+    ):
+        identities = {}
+        for item in all_rows:
+            identities.setdefault(item[1][identity], []).append(item)
+        for code, rows in identities.items():
+            affected = ", ".join(dict.fromkeys(row["class_code"] for _, row in rows))
+            consistent(rows, fields, f"{COLUMN_MAP[identity]} {code} (Class_Code {affected})")
+    if errors:
+        raise ValueError("Conflicting or invalid master-workbook data; import was not applied:\n" + "\n".join(errors))
+
+    aggregated = []
+    for code, rows in groups.items():
+        first = dict(rows[0][1])
+        first["instructors"] = unique_records([
+            {**{f"name_{lang}": row[f"instructor_{lang}"] for lang in ("en", "zh", "pt")},
+             **{field: row[field] for field in INSTRUCTOR_FIELDS if not field.startswith("name_")}}
+            for _, row in rows
+        ], INSTRUCTOR_FIELDS)
+        first["prerequisites"] = unique_records([
+            {"prerequisite_code": row["prerequisite_code"],
+             **{f"name_{lang}": row[f"prerequisite_{lang}"] for lang in ("en", "zh", "pt")}}
+            for _, row in rows
+        ], PREREQUISITE_FIELDS)
+        edges = []
+        for _, row in rows:
+            for edge in normalize_relationship(row["joint_relationship"], code).split(", "):
+                if edge and edge not in edges:
+                    edges.append(edge)
+        first["joint_relationship"] = ", ".join(edges)
+        aggregated.append(first)
+    return aggregated
+
+
 def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> dict:
     """Validate and atomically replace the database from the master workbook."""
     result = {
@@ -169,7 +257,9 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
     df.columns = [str(column).strip() for column in df.columns]
     _validate_headers(df)
     validated_rules = _validated_rule_codes(df)
+    records = _aggregate_rows(df, validated_rules)
     result["total_rows"] = len(df)
+    result["repeated_classes"] = {code: int(count) for code, count in df[COLUMN_MAP["class_code"]].map(_clean).value_counts(sort=False).items() if count > 1}
 
     destination = Path(db_path or DB_PATH)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -193,6 +283,15 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
             )
             faculty_map[code] = cursor.lastrowid
 
+        for code, rows in df.groupby(COLUMN_MAP["prog_code"], sort=False):
+            for field in ("prog_en", "prog_zh", "prog_pt"):
+                variants = list(dict.fromkeys(col(row, field) for _, row in rows.iterrows()))
+                if len(variants) > 1:
+                    result["warnings"].append(
+                        f"programme '{code}' has class-specific {COLUMN_MAP[field]} variants: {variants!r}; "
+                        "all values are preserved per class; programme selector uses the first source value"
+                    )
+
         for _, row in df.iterrows():
             code = col(row, "prog_code")
             if not code or code in programme_map:
@@ -213,50 +312,50 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
             )
             programme_map[code] = cursor.lastrowid
 
-        seen_codes: set[str] = set()
         imported_codes: list[str] = []
         relationships: dict[str, list[str]] = {}
-        for row_number, (_, row) in enumerate(df.iterrows(), start=2):
-            class_code = col(row, "class_code")
-            programme_id = programme_map.get(col(row, "prog_code"))
-            if not class_code or programme_id is None:
-                result["warnings"].append(f"row {row_number} has no valid class/programme and was skipped")
-                result["skipped"] += 1
-                continue
-            if class_code in seen_codes:
-                result["warnings"].append(f"duplicate class_code '{class_code}' was skipped")
-                result["skipped"] += 1
-                continue
-            seen_codes.add(class_code)
-
-            rule_code = validated_rules[row.name]
-            relationship = normalize_relationship(col(row, "joint_relationship"), class_code)
+        for row in records:
+            class_code = row["class_code"]
+            programme_id = programme_map[row["prog_code"]]
+            rule_code = row["rule_code"]
+            relationship = row["joint_relationship"]
             relationships[class_code] = [part.strip() for part in relationship.split(",") if part.strip()]
 
-            credits = col(row, "credits")
-            duration = col(row, "duration")
-            conn.execute(
+            credits = row["credits"]
+            duration = row["duration"]
+            cursor = conn.execute(
                 """INSERT INTO classes
                    (class_code, module_code, module_name_en, module_name_zh, module_name_pt,
                     prerequisite_en, prerequisite_zh, prerequisite_pt, credits, duration,
                     medium_of_instruction, instructor_en, instructor_zh, instructor_pt,
                     email, room_en, room_zh, room_pt, telephone, rule_code,
-                    joint_relationship, programme_id, academic_year, semester)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    joint_relationship, programme_id, academic_year, semester,
+                    programme_name_en, programme_name_zh, programme_name_pt)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     class_code,
                     class_code.rsplit("-", 1)[0] if "-" in class_code else class_code,
-                    col(row, "module_name_en"), col(row, "module_name_zh"), col(row, "module_name_pt"),
-                    col(row, "prerequisite_en"), col(row, "prerequisite_zh"), col(row, "prerequisite_pt"),
-                    int(float(credits)) if credits else None,
-                    int(float(duration)) if duration else None,
-                    col(row, "medium_of_instruction", None),
-                    col(row, "instructor_en"), col(row, "instructor_zh"), col(row, "instructor_pt"),
-                    col(row, "email"), col(row, "room_en"), col(row, "room_zh"), col(row, "room_pt"),
-                    col(row, "telephone"), rule_code, relationship, programme_id,
-                    col(row, "academic_year"), col(row, "semester"),
+                    row["module_name_en"], row["module_name_zh"], row["module_name_pt"],
+                    row["prerequisite_en"], row["prerequisite_zh"], row["prerequisite_pt"],
+                    credits, duration,
+                    row["medium_of_instruction"] or None,
+                    row["instructor_en"], row["instructor_zh"], row["instructor_pt"],
+                    row["email"], row["room_en"], row["room_zh"], row["room_pt"],
+                    row["telephone"], rule_code, relationship, programme_id,
+                    row["academic_year"], row["semester"],
+                    row["prog_en"], row["prog_zh"], row["prog_pt"],
                 ),
             )
+            for table, fields, key in (
+                ("class_instructors", INSTRUCTOR_FIELDS, "instructors"),
+                ("class_prerequisites", PREREQUISITE_FIELDS, "prerequisites"),
+            ):
+                for position, record in enumerate(row[key]):
+                    columns = ("class_id", "position") + fields
+                    conn.execute(
+                        f"INSERT INTO {table} ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                        (cursor.lastrowid, position, *(record[field] for field in fields)),
+                    )
             imported_codes.append(class_code)
 
         imported_set = set(imported_codes)
@@ -296,6 +395,8 @@ def import_data(excel_path: str, db_path: str | os.PathLike | None = None) -> di
                 stack.extend(graph[current] - visited)
             components.append(component)
 
+        result["instructors"] = sum(len(row["instructors"]) for row in records)
+        result["prerequisites"] = sum(len(row["prerequisites"]) for row in records)
         result["faculties"] = len(faculty_map)
         result["programmes"] = len(programme_map)
         result["classes"] = len(imported_codes)

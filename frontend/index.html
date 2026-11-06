@@ -180,6 +180,9 @@
   <p style="font-size:0.85rem;color:#475569;margin-bottom:1rem">
     Upload an Excel file (<code>.xlsx</code>) to replace all current data in the database.
     The file must contain <strong>one sheet</strong> with the columns listed below.
+    Repeated Class_Code rows are combined into one class. Teacher contacts and prerequisite
+    name/code pairs stay together in source order. Room_Chn is used in all document languages;
+    Room_Eng and Room_Prt are optional legacy columns.
   </p>
 
   <details style="margin-bottom:1rem">
@@ -454,8 +457,9 @@
         ? `\nWarnings: ${data.warnings.join("; ")}` : "";
       uploadStatus.textContent =
         `Imported ${data.faculties} faculties, ${data.programmes} programmes, ` +
-        `${data.classes} classes in ${data.outlines} selection groups ` +
-        `(${data.joint_groups} joint groups; ${data.skipped} skipped) from ${data.total_rows} rows.` +
+        `${data.classes} unique classes in ${data.outlines} selection groups ` +
+        `(${data.joint_groups} joint groups; ${data.skipped} skipped) from ${data.total_rows} Excel rows; ` +
+        `${data.instructors} teacher/contact records and ${data.prerequisites} prerequisite records.` +
         warnings;
       uploadStatus.className = "status success";
 

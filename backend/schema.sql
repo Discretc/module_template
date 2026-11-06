@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS classes (
     joint_relationship TEXT,              -- comma-separated related full class codes
     programme_id     INTEGER NOT NULL REFERENCES programmes(id),
     academic_year    TEXT,
-    semester         TEXT
+    semester         TEXT,
+    programme_name_en TEXT,
+    programme_name_zh TEXT,
+    programme_name_pt TEXT
 );
 
 CREATE TABLE IF NOT EXISTS rule_migration_review (
@@ -53,4 +56,21 @@ CREATE TABLE IF NOT EXISTS rule_migration_review (
     legacy_value TEXT,
     reason       TEXT NOT NULL,
     flagged_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- v3: ordered source-row records, independent of each other (no cross-product).
+CREATE TABLE IF NOT EXISTS class_instructors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    name_en TEXT, name_zh TEXT, name_pt TEXT, email TEXT,
+    room_zh TEXT, room_en TEXT, room_pt TEXT, telephone TEXT,
+    UNIQUE (class_id, position)
+);
+CREATE TABLE IF NOT EXISTS class_prerequisites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL,
+    prerequisite_code TEXT, name_en TEXT, name_zh TEXT, name_pt TEXT,
+    UNIQUE (class_id, position)
 );

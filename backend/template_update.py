@@ -126,7 +126,9 @@ def validate_prepared(path: Path, language: str) -> None:
             }
             rendered = _render_one(sample, language, template_path=path)
             doc = Document(io.BytesIO(rendered))
-            if doc.tables[0].cell(1, 1).text != sample["class_code"] or doc.tables[0].cell(4, 1).text:
+            expected_medium = {"en": "English", "zh": "中文", "pt": "Português"}[language]
+            if (doc.tables[0].cell(1, 1).text != sample["class_code"]
+                    or doc.tables[0].cell(4, 1).text != expected_medium):
                 raise TemplateUpdateError(f"{language.upper()}: representative metadata generation failed")
             if "Programme A / Programme B" not in " ".join(p.text for p in doc.paragraphs):
                 raise TemplateUpdateError(f"{language.upper()}: representative programme generation failed")

@@ -16,6 +16,7 @@ from docxtpl import DocxTemplate
 from jinja2 import Environment, StrictUndefined
 from lxml import etree
 
+from class_records import instructors, prerequisites
 from rules import JointRuleConflictError, get_rule_paragraphs, normalize_rule_code
 from template_storage import configured_template_directory, template_lock
 
@@ -98,15 +99,56 @@ def _attendance_text(degree_key: str, lang: str) -> str:
 
 
 def _prerequisite_text(cls: dict, lang: str, keys: tuple[str, ...]) -> str:
-    """Localize missing prerequisites while retaining meaningful source values."""
-    for key in keys:
-        value = cls.get(key)
-        if value is None or (isinstance(value, float) and math.isnan(value)):
-            continue
-        text = str(value).replace("\xa0", " ").strip()
-        if text and text.casefold() not in PREREQUISITE_MISSING:
-            return text
-    return PREREQUISITE_DEFAULTS[lang]
+    """Pair each row's localized name with its own code, retaining stable order."""
+    values = []
+    for record in prerequisites(cls):
+        name_keys = tuple(key.replace("prerequisite_", "name_") for key in keys)
+        name = _pick(record, *name_keys)
+        code = _safe_text(record.get("prerequisite_code"))
+        text = f"{name} ({code})" if name and code else name or code
+        if text and text not in values:
+            values.append(text)
+    return ", ".join(values) or PREREQUISITE_DEFAULTS[lang]
+
+
+def _teacher_context(cls: dict, lang: str) -> dict:
+    records = instructors(cls)
+    name_keys = (f"name_{lang}", "name_en", "name_zh", "name_pt")
+    names = [_pick(record, *name_keys) for record in records]
+    # Unique names in source order. Numbered owners keep contacts unambiguous
+    # even when a room/email is shared or some teachers have missing contacts.
+    identities = [("name", name) if name else ("contact", index)
+                  for index, name in enumerate(names)]
+    unique_owners = dict.fromkeys(identities)
+    multiple = len(records) > 1
+    labels = {owner: str(index + 1) for index, owner in enumerate(unique_owners)}
+    instructor_text = "\n".join(
+        f"{labels[owner]}. {name}".rstrip() if multiple else name
+        for owner, name in dict(zip(identities, names)).items()
+    )
+
+    def contacts(*keys):
+        owners = {}
+        for record, identity in zip(records, identities):
+            value = _pick(record, *keys)
+            if not value:
+                continue
+            owner = labels[identity]
+            if owner not in owners.setdefault(value, []):
+                owners[value].append(owner)
+        return "\n".join(
+            f"[{', '.join(indices)}] {value}" if multiple else value
+            for value, indices in owners.items()
+        )
+
+    return {
+        "instructor": instructor_text,
+        "email": contacts("email"),
+        # Room_Chn wins in every language. Non-Chinese legacy values are only
+        # used when no authoritative Chinese room value exists for that record.
+        "office": contacts("room_zh", "room_en", "room_pt"),
+        "office_phone": contacts("telephone"),
+    }
 
 
 def _class_rule_code(cls: dict) -> int:
@@ -145,24 +187,18 @@ def _build_context(cls: dict, lang: str) -> dict:
             "programme_name": ("prog_name_en",),
             "module_name": ("module_name_en",),
             "prerequisites": ("prerequisite_en",),
-            "instructor": ("instructor_en",),
-            "office": ("room_en",),
         },
         "zh": {
             "academic_unit": ("faculty_zh", "faculty_en"),
             "programme_name": ("prog_name_zh", "prog_name_en"),
             "module_name": ("module_name_zh", "module_name_en"),
             "prerequisites": ("prerequisite_zh", "prerequisite_en"),
-            "instructor": ("instructor_zh", "instructor_en"),
-            "office": ("room_zh", "room_en"),
         },
         "pt": {
             "academic_unit": ("faculty_pt", "faculty_en"),
             "programme_name": ("prog_name_pt", "prog_name_en"),
             "module_name": ("module_name_pt", "module_name_en"),
             "prerequisites": ("prerequisite_pt", "prerequisite_en"),
-            "instructor": ("instructor_pt", "instructor_en"),
-            "office": ("room_pt", "room_en"),
         },
     }[lang]
 
@@ -176,18 +212,12 @@ def _build_context(cls: dict, lang: str) -> dict:
         "module_code": _safe_text(cls.get("class_code")) or _safe_text(cls.get("module_code")),
         "module_name": _pick(cls, *language_fields["module_name"]),
         "prerequisites": _prerequisite_text(cls, lang, language_fields["prerequisites"]),
-        # This is the module's actual teaching language. It is independent of
-        # the selected document language and remains blank when no source has
-        # supplied it.
-        "medium_of_instruction": _safe_text(cls.get("medium_of_instruction")),
+        "medium_of_instruction": {"en": "English", "zh": "中文", "pt": "Português"}[lang],
         "credits": _safe_text(cls.get("credits")),
         "contact_hours": _safe_text(cls.get("duration")),
         "academic_year": _safe_text(cls.get("academic_year")),
         "semester": _safe_text(cls.get("semester")),
-        "instructor": _pick(cls, *language_fields["instructor"]),
-        "email": _safe_text(cls.get("email")),
-        "office": _pick(cls, *language_fields["office"]),
-        "office_phone": _safe_text(cls.get("telephone")),
+        **_teacher_context(cls, lang),
     }
 
 
