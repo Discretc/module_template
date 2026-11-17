@@ -6,6 +6,7 @@ import os
 import re
 import sqlite3
 from collections import defaultdict
+from contextlib import closing
 from datetime import date
 from pathlib import Path
 from runtime_paths import resource_path, writable_path
@@ -27,9 +28,14 @@ SEED_PATH = BASE_DIR / "seed.sql"
 
 
 def get_connection(db_path: str | os.PathLike | None = None) -> sqlite3.Connection:
+    """Return a caller-owned connection; a transaction context does not close it."""
     conn = sqlite3.connect(str(db_path or DB_PATH))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+    except BaseException:
+        conn.close()
+        raise
     return conn
 
 
@@ -227,23 +233,21 @@ def init_db(db_path: str | os.PathLike | None = None, seed: bool = True) -> None
 
 
 def get_faculties() -> list[dict]:
-    conn = get_connection()
-    rows = conn.execute(
-        "SELECT id, code, name_en, name_zh, name_pt FROM faculties ORDER BY code"
-    ).fetchall()
-    conn.close()
+    with closing(get_connection()) as conn:
+        rows = conn.execute(
+            "SELECT id, code, name_en, name_zh, name_pt FROM faculties ORDER BY code"
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
 def get_programmes(faculty_id: int | None = None) -> list[dict]:
-    conn = get_connection()
     sql = "SELECT id, code, name_en, name_zh, name_pt, degree_level FROM programmes"
     params: tuple = ()
     if faculty_id:
         sql += " WHERE faculty_id = ?"
         params = (faculty_id,)
-    rows = conn.execute(sql + " ORDER BY code", params).fetchall()
-    conn.close()
+    with closing(get_connection()) as conn:
+        rows = conn.execute(sql + " ORDER BY code", params).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -423,9 +427,8 @@ def _selected_groups(
 
 
 def get_classes(programme_id: int | None = None, faculty_id: int | None = None) -> list[dict]:
-    conn = get_connection()
-    rows = _full_rows(conn)
-    conn.close()
+    with closing(get_connection()) as conn:
+        rows = _full_rows(conn)
     groups = _selected_groups(rows, programme_id=programme_id, faculty_id=faculty_id)
     summaries = []
     for group, output_members in groups:
@@ -456,9 +459,8 @@ def get_classes_full(
     class_codes contains the complete component; output_class_codes contains
     only the members that should receive packages for this selection.
     """
-    conn = get_connection()
-    rows = _full_rows(conn)
-    conn.close()
+    with closing(get_connection()) as conn:
+        rows = _full_rows(conn)
     groups = _selected_groups(rows, class_ids, programme_id, faculty_id)
     content_groups = []
     for group, output_members in groups:
@@ -475,13 +477,12 @@ def get_academic_years(today: date | None = None) -> dict:
     default = f"{start_year}/{start_year + 1}"
     rolling = {f"{year}/{year + 1}" for year in range(start_year - 1, start_year + 4)}
 
-    conn = get_connection()
-    imported = {
-        str(row[0]).strip()
-        for row in conn.execute(
-            "SELECT DISTINCT academic_year FROM classes WHERE TRIM(COALESCE(academic_year, '')) <> ''"
-        )
-    }
-    conn.close()
+    with closing(get_connection()) as conn:
+        imported = {
+            str(row[0]).strip()
+            for row in conn.execute(
+                "SELECT DISTINCT academic_year FROM classes WHERE TRIM(COALESCE(academic_year, '')) <> ''"
+            )
+        }
     years = sorted(rolling | imported, key=lambda value: int(value.split("/", 1)[0]), reverse=True)
     return {"years": years, "default": default}

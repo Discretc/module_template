@@ -239,11 +239,20 @@ with s.template_lock(active):
     def test_runtime_and_recovery_artifacts_are_git_ignored(self):
         names = ["template-storage/templates/template_en.docx", "custom/.template-backups/id/template_en.docx",
                  "custom/.template-stage-id/official_en.docx", "custom/.template-transaction.json",
-                 "custom/.template-update.lock", "custom/templates/.template-copy-id", "custom/.template-journal-id"]
-        result = subprocess.run(["git", "check-ignore", "--stdin"], input="\n".join(names) + "\n",
-                                cwd=ROOT, text=True, capture_output=True, timeout=10)
-        self.assertEqual(0, result.returncode, result.stderr)
-        self.assertEqual(names, result.stdout.splitlines())
+                 "custom/.template-update.lock", "custom/templates/.template-copy-id", "custom/.template-journal-id",
+                 "custom/.template-backups/教務 Português/template_en.docx",
+                 "custom/.template-stage-with spaces/official_zh.docx"]
+        # Binary NUL delimiters avoid Windows text-mode CRLF input translation
+        # and Git's quoting of Unicode/whitespace. Tracked resources stay visible
+        # as a negative control: check-ignore must omit them from its output.
+        expected = ("\0".join(names) + "\0").encode("utf-8")
+        queries = expected + b"backend/templates/template_en.docx\0frontend/index.html\0"
+        for quote_paths in ("true", "false"):
+            with self.subTest(quote_paths=quote_paths):
+                result = subprocess.run(["git", "-c", f"core.quotePath={quote_paths}", "check-ignore", "--stdin", "-z"],
+                                        input=queries, cwd=ROOT, capture_output=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertEqual(expected, result.stdout)
 
 
 if __name__ == "__main__":

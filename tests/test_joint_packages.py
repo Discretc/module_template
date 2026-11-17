@@ -1,4 +1,5 @@
 """Exercise the real Flask selection, SQLite resolution and ZIP generation path."""
+from contextlib import closing
 import io
 from pathlib import Path
 import tempfile
@@ -32,7 +33,8 @@ class JointPackageRouteTests(unittest.TestCase):
         self.ready_patch = patch.object(app, "DATABASE_STARTUP_ERROR", None)
         self.ready_patch.start()
         self.addCleanup(self.ready_patch.stop)
-        with database.get_connection() as conn:
+        # SQLite's context manager handles transactions, not connection closure.
+        with closing(database.get_connection()) as conn, conn:
             conn.execute("INSERT INTO faculties (id, code) VALUES (1, 'FCA')")
             for index in (1, 2, 3):
                 conn.execute(
@@ -75,7 +77,7 @@ class JointPackageRouteTests(unittest.TestCase):
         self.check_download({"class_ids": [1, 2, 3]}, self.codes)
 
     def test_two_joint_members_have_two_packages_and_six_joint_docs(self):
-        with database.get_connection() as conn:
+        with closing(database.get_connection()) as conn, conn:
             conn.execute("DELETE FROM classes WHERE id = 3")
         self.check_download({"class_ids": [1, 2]}, self.codes[:2], self.codes[:2])
 
@@ -97,7 +99,7 @@ class JointPackageRouteTests(unittest.TestCase):
         self.check_download({"programme_id": 1}, [self.codes[0]])
 
     def test_faculty_scope_does_not_output_joint_members_in_other_faculties(self):
-        with database.get_connection() as conn:
+        with closing(database.get_connection()) as conn, conn:
             conn.execute("INSERT INTO faculties (id, code) VALUES (2, 'OTHER')")
             conn.execute("UPDATE programmes SET faculty_id = 2 WHERE id = 1")
         self.check_download({"faculty_id": 2}, [self.codes[0]])
@@ -114,7 +116,7 @@ class JointPackageRouteTests(unittest.TestCase):
         self.assertEqual([self.codes[0]], [c["class_code"] for c in programme_choices])
 
     def test_unselected_joint_member_rule_conflict_blocks_generation(self):
-        with database.get_connection() as conn:
+        with closing(database.get_connection()) as conn, conn:
             conn.execute("UPDATE classes SET rule_code = 4 WHERE id = 3")
         for payload in ({"class_ids": [1]}, {"programme_id": 1}, {"faculty_id": 1}):
             with self.subTest(payload=payload):

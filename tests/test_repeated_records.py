@@ -1,4 +1,5 @@
 """Regression contracts for the October 2026 master workbook."""
+from contextlib import closing
 import io
 import os
 from pathlib import Path
@@ -162,7 +163,7 @@ class RepeatedRecordsTests(unittest.TestCase):
         self.assertEqual((5, 3, 1, 1), tuple(summary[k] for k in ("total_rows", "classes", "outlines", "joint_groups")))
         choices = database.get_classes()
         self.assertEqual(["A-111", "B-111", "C-111"], [c["class_code"] for c in choices])
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             self.assertEqual("B-111, C-111", conn.execute("SELECT joint_relationship FROM classes WHERE class_code='A-111'").fetchone()[0])
         groups = database.get_classes_full()
         with zipfile.ZipFile(generator.generate_batch(groups, output_dir=self.root/"out")) as outer:
@@ -205,7 +206,7 @@ class RepeatedRecordsTests(unittest.TestCase):
         self.load([row(Instructor_Eng="One", Prerequsite_Code="P1", Prerequsite_Eng="First"),
                    row(Instructor_Eng="Two", Prerequsite_Code="P2", Prerequsite_Eng="Second")])
         def contents():
-            with sqlite3.connect(self.db) as conn:
+            with closing(sqlite3.connect(self.db)) as conn, conn:
                 self.assertEqual([], conn.execute("PRAGMA foreign_key_check").fetchall())
                 return [conn.execute(f"SELECT * FROM {table} ORDER BY id").fetchall() for table in ("classes", "class_instructors", "class_prerequisites")]
         before = contents()
@@ -215,7 +216,7 @@ class RepeatedRecordsTests(unittest.TestCase):
 
     def test_legacy_scalar_contacts_and_prerequisites_backfilled(self):
         self.load([row(Room_Chn="Room", Prerequsite_Eng="Legacy")])
-        with sqlite3.connect(self.db) as conn:
+        with closing(sqlite3.connect(self.db)) as conn, conn:
             conn.execute("DROP TABLE class_instructors")
             conn.execute("DROP TABLE class_prerequisites")
         database.init_db(self.db, seed=False)

@@ -3,6 +3,7 @@
 Usage: python scripts/validate_authoritative_workbook.py master.xlsx [--output-dir output/master-validation]
 Rendering is a separate visual QA step; this script does not claim layout review.
 """
+from contextlib import closing
 import argparse
 import hashlib
 import io
@@ -105,7 +106,7 @@ def validate(workbook, output):
         report["zip_packages"] = len(by_code)
         report["representative_scenarios"] = scenarios
         report["representative_docx"] = len(scenarios)*3
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         report["database_counts"] = {table:conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
                                      for table in ("faculties", "programmes", "classes", "class_instructors", "class_prerequisites")}
         assert not conn.execute("PRAGMA foreign_key_check").fetchall()

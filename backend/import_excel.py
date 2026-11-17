@@ -137,8 +137,13 @@ def _validate_headers(df: pd.DataFrame) -> None:
 
 def _new_database(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
+    except BaseException:
+        # A failed factory never hands ownership to import_data's cleanup.
+        conn.close()
+        raise
     return conn
 
 

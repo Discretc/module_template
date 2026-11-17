@@ -4,6 +4,7 @@ Builds call --executable; --source runs the same checks without claiming an EXE
 was tested. Fixtures are synthetic authoritative-format workbooks and official
 template-slot fixtures derived from the tracked runtime DOCX files.
 """
+from contextlib import closing
 import argparse
 import hashlib
 import io
@@ -205,7 +206,7 @@ def run_smoke(command, data, cwd, *, occupied_default=False):
         stop(process, data)
     assert not healthy(state["url"], state["nonce"])
     assert not (data / "instance.json").exists()
-    with sqlite3.connect(data / "data" / "module_outlines.db") as connection:
+    with closing(sqlite3.connect(data / "data" / "module_outlines.db")) as connection:
         assert connection.execute("SELECT COUNT(*) FROM classes").fetchone()[0] == 2
     process, state = start(command, data, cwd)
     try:

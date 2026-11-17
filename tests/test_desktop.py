@@ -71,6 +71,7 @@ class DesktopStorageTests(unittest.TestCase):
         # Fresh processes prove real importer/generator paths are configured
         # before Flask's import-time initialization, including a different cwd.
         code = '''
+from contextlib import closing
 from pathlib import Path
 import sys
 from desktop_auth import AdministratorCredentials
@@ -83,7 +84,7 @@ assert database.DB_PATH == import_excel.DB_PATH == root/'data/module_outlines.db
 assert generator.OUTPUT_DIR == root/'output'
 assert generator.TEMPLATE_DIR == root/'templates'
 assert app.static_folder.endswith('frontend')
-with database.get_connection() as conn:
+with closing(database.get_connection()) as conn, conn:
     count = conn.execute('SELECT COUNT(*) FROM classes').fetchone()[0]
     if sys.argv[2] == 'first':
         assert count > 0
