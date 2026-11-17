@@ -98,7 +98,12 @@ assert "environment-only-test-secret" not in response.get_data(as_text=True)
         public = self.bundled.parent.parent / "frontend"
         public.mkdir()
         self.store.mkdir()
-        self.active.symlink_to(public, target_is_directory=True)
+        try:
+            self.active.symlink_to(public, target_is_directory=True)
+        except OSError as exc:
+            if os.name == "nt" and getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows account lacks symlink creation privilege")
+            raise
         with self.assertRaisesRegex(ValueError, "symbolic link"):
             storage.configured_template_directory(self.bundled)
         self.assertEqual([], list(public.iterdir()))

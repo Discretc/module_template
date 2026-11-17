@@ -408,10 +408,17 @@ class GenerateRouteTests(unittest.TestCase):
 
 class TemplateConversionTests(unittest.TestCase):
     def test_en_zh_only_conversion_leaves_portuguese_unwritten(self):
+        from test_supervisor_changes import official_copy
         with tempfile.TemporaryDirectory() as output_dir:
             destination = Path(output_dir)
+            source = destination / "official"
+            source.mkdir()
+            # The original official source directory is intentionally ignored
+            # by Git. Keep this regression runnable in a clean Windows build.
+            for language in ("en", "zh"):
+                (source / f"module-outline-template_{language}_202305.docx").write_bytes(official_copy(language))
             convert_template.convert_templates(
-                ROOT / "Module Outline Templates",
+                source,
                 destination,
                 None,
             )

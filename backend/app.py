@@ -32,8 +32,9 @@ from import_excel import import_data, COLUMN_MAP
 from rules import JointRuleConflictError, RuleValidationError, RULE_PARAGRAPHS
 from template_update import MAX_REQUEST_BYTES, TemplateUpdateError, update_templates
 from werkzeug.exceptions import RequestEntityTooLarge
+from runtime_paths import resource_path
 
-app = Flask(__name__, static_folder="../frontend", static_url_path="")
+app = Flask(__name__, static_folder=str(resource_path("frontend")), static_url_path="")
 app.config["TEMPLATE_ADMIN_TOKEN"] = os.environ.get("TEMPLATE_ADMIN_TOKEN", "")
 app.config["TEMPLATE_DIR"] = TEMPLATE_DIR
 app.config["TEMPLATE_STORAGE_CONFIGURED"] = bool(os.environ.get("TEMPLATE_STORAGE_DIR", ""))
@@ -53,7 +54,7 @@ def require_ready_database():
     if (
         DATABASE_STARTUP_ERROR
         and request.path.startswith("/api/")
-        and request.path not in {"/api/import-excel", "/api/column-format", "/api/rules", "/api/templates/convert"}
+        and request.path not in {"/api/import-excel", "/api/column-format", "/api/rules", "/api/templates/convert", "/api/runtime"}
     ):
         return jsonify({"error": DATABASE_STARTUP_ERROR}), 503
 
@@ -111,12 +112,16 @@ def handle_upload_too_large(error):
 
 @app.route("/api/templates/convert", methods=["POST"])
 def api_convert_templates():
+    desktop_auth = app.config.get("DESKTOP_ADMIN_AUTHENTICATOR")
     token = app.config["TEMPLATE_ADMIN_TOKEN"]
-    if not token:
+    if desktop_auth is None and not token:
         return jsonify({"error": "Template updates are disabled. Ask an administrator to configure TEMPLATE_ADMIN_TOKEN."}), 503
     provided = request.headers.get("Authorization", "")
-    if not secrets.compare_digest(provided.encode(), f"Bearer {token}".encode()):
-        return jsonify({"error": "An authorized administrator token is required."}), 401
+    authorized = (desktop_auth(provided) if desktop_auth is not None else
+                  secrets.compare_digest(provided.encode(), f"Bearer {token}".encode()))
+    if not authorized:
+        message = "The administrator password is required. After repeated incorrect attempts, wait 30 seconds and try again." if desktop_auth is not None else "An authorized administrator token is required."
+        return jsonify({"error": message}), 401
     if not app.config["TEMPLATE_STORAGE_CONFIGURED"]:
         return jsonify({"error": "Template updates are disabled until an administrator configures TEMPLATE_STORAGE_DIR on persistent storage."}), 503
     request.max_content_length = MAX_REQUEST_BYTES
@@ -137,6 +142,12 @@ def api_convert_templates():
     except Exception:
         app.logger.error("Template activation failed; check persistent storage and recovery journal")
         return jsonify({"error": "Template activation failed. Generation is blocked if recovery is incomplete; contact the administrator."}), 500
+
+
+@app.route("/api/runtime")
+def api_runtime():
+    """Public mode indicator only; never expose credentials or local paths."""
+    return jsonify({"desktop": app.config.get("DESKTOP_ADMIN_AUTHENTICATOR") is not None})
 
 
 # ── Generate templates ───────────────────────────────────────────────────────

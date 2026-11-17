@@ -19,10 +19,11 @@ from lxml import etree
 from class_records import instructors, prerequisites
 from rules import JointRuleConflictError, get_rule_paragraphs, normalize_rule_code
 from template_storage import configured_template_directory, template_lock
+from runtime_paths import resource_path, writable_path
 
 
-TEMPLATE_DIR = configured_template_directory(Path(__file__).resolve().parent / "templates")
-OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output"
+TEMPLATE_DIR = configured_template_directory(resource_path("backend", "templates"))
+OUTPUT_DIR = writable_path(resource_path("output"), "output")
 
 TEMPLATES = {
     "en": TEMPLATE_DIR / "template_en.docx",

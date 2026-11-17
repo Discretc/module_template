@@ -8,6 +8,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
+from runtime_paths import resource_path, writable_path
 
 from class_records import INSTRUCTOR_FIELDS, PREREQUISITE_FIELDS, instructors, prerequisites, unique_records
 
@@ -19,8 +20,8 @@ from rules import (
 )
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "module_outlines.db"
+BASE_DIR = resource_path("backend")
+DB_PATH = writable_path(BASE_DIR / "module_outlines.db", "data", "module_outlines.db")
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 SEED_PATH = BASE_DIR / "seed.sql"
 
@@ -207,6 +208,9 @@ def _migrate_class_records(conn: sqlite3.Connection) -> None:
 
 def init_db(db_path: str | os.PathLike | None = None, seed: bool = True) -> None:
     path = Path(db_path or DB_PATH)
+    # Desktop demos are first-run only, even if an existing DB is empty.
+    if os.environ.get("MODULE_OUTLINE_DESKTOP") == "1" and path.exists():
+        seed = False
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(path)
     try:

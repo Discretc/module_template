@@ -39,3 +39,10 @@ backend/.template-transaction.json
 .template-copy-*
 .template-journal-*
 /template-storage/
+
+# Desktop builds, isolated build environment, and local runtime state
+/build/
+/dist/
+/release/
+/.build-venv/
+/desktop-data/

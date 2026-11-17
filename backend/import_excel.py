@@ -8,6 +8,7 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
+from runtime_paths import resource_path, writable_path
 
 import pandas as pd
 
@@ -15,8 +16,8 @@ from class_records import INSTRUCTOR_FIELDS, PREREQUISITE_FIELDS, unique_records
 from rules import RuleValidationError, normalize_rule_code
 
 
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "module_outlines.db"
+BASE_DIR = resource_path("backend")
+DB_PATH = writable_path(BASE_DIR / "module_outlines.db", "data", "module_outlines.db")
 SCHEMA_PATH = BASE_DIR / "schema.sql"
 SHEET = 0
 

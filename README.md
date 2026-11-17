@@ -8,6 +8,12 @@ menus. The system retrieves all data from a database and produces a downloadable
 .zip archive containing one inner ZIP per class code, each with editable
 EN, ZH and PT .docx files. Generated files are also saved on the server in the `output/` folder.
 
+## Windows desktop application
+
+Faculty staff can use a standalone local Windows package without installing Python.
+See [the Windows user guide](README-Windows.md) and [build/verification documentation](docs/windows-packaging.md).
+The desktop entry point uses Waitress and persistent per-user storage; the existing web deployment remains supported.
+
 
 ## Project Structure
 

@@ -143,7 +143,7 @@ class RuleReferenceTests(unittest.TestCase):
     def test_frontend_rules_render_and_actual_package_counts(self):
         # Run the actual frontend helpers with a small DOM stub, no duplicate implementation.
         import re
-        html = (ROOT / "frontend/index.html").read_text()
+        html = (ROOT / "frontend/index.html").read_text(encoding="utf-8")
         helpers = re.search(r"  function packageCount\(.*?(?=  \(async \(\) =>)", html, re.S).group()
         script = '''const assert = require('node:assert/strict');
 const document = {

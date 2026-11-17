@@ -221,7 +221,7 @@
       <p>Conversion validates all languages before activation and backs up the current templates. Administrator access is required.</p>
     </div>
     <form id="template-form">
-      <div class="field"><label for="template-token">Administrator token</label><input id="template-token" type="password" autocomplete="off" required /></div>
+      <div class="field"><label for="template-token">Administrator password (desktop) or token (web)</label><input id="template-token" type="password" autocomplete="off" required /></div>
       <div class="field"><label for="template-en">English official DOCX</label><input id="template-en" name="en" type="file" accept=".docx" required /></div>
       <div class="field"><label for="template-zh">Chinese official DOCX</label><input id="template-zh" name="zh" type="file" accept=".docx" required /></div>
       <div class="field"><label for="template-pt">Portuguese official DOCX</label><input id="template-pt" name="pt" type="file" accept=".docx" required /></div>
@@ -242,6 +242,7 @@
   const statusEl      = document.getElementById("status");
 
   let allClasses = []; // classes currently loaded for counting
+  const runtimeInfo = fetch("/api/runtime").then(res => res.json()).catch(() => ({desktop: false}));
 
   async function loadAcademicYears() {
     const select = document.getElementById("academic-year");
@@ -545,8 +546,10 @@
         if (!file) throw new Error("Select all three official DOCX templates.");
         form.append(lang, file);
       }
+      const runtime = await runtimeInfo;
+      const authorization = runtime.desktop ? `Desktop ${encodeURIComponent(token.value)}` : `Bearer ${token.value}`;
       const res = await fetch("/api/templates/convert", {
-        method: "POST", headers: { "Authorization": `Bearer ${token.value}` }, body: form,
+        method: "POST", headers: { "Authorization": authorization }, body: form,
       });
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Template update failed.");
